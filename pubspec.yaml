@@ -1,0 +1,41 @@
+name: KatawazExchange
+description: "An App to Chat & Exchange under Katawaz Company."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  url_launcher: ^6.1.10
+  webview_flutter: ^4.2.1
+  http: ^1.2.2
+  image_picker: ^1.1.1
+  shared_preferences: ^2.2.3
+  dio: ^5.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.11.0  
+  
+flutter_icons:
+  android: true # ✅ اینو اضافه کن
+  ios: true # ✅ اینو اضافه کن
+  image_path: "assets/app_icon.png" # ✅ اینو اضافه کن  
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.png
+
+    
+  # Uncomment and add assets if needed
+  # assets:
+  #   - assets/logo.png
