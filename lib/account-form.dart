@@ -45,7 +45,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
     setState(() => _isLoading = true);
 
     try {
-      final uri = Uri.parse("https://api1.katawazexchange.com/api/account/postAccountAttachment");
+      final uri = Uri.parse("https://209.42.25.31:7179//api/account/postAccountAttachment");
 
       final request = http.MultipartRequest('POST', uri);
 

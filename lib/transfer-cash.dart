@@ -85,7 +85,7 @@ class TransactionListPage extends StatefulWidget {
 class _TransactionListPageState extends State<TransactionListPage> {
   final Dio dio = Dio();
   final String apiUrl =
-      "https://api1.katawazexchange.com/api/TransactionCash/PostIncludeByPaging";
+      "https://209.42.25.31:7179//api/TransactionCash/PostIncludeByPaging";
 
   List<TransactionModel> dataList = [];
   int dataListCount = 0;

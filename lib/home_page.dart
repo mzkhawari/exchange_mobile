@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'account-form.dart'; // ✅ اینو اضافه کن
 import 'customer-list-page.dart'; // ✅ اینو اضافه کن
 import 'transfer-cash.dart'; // ✅ اینو اضافه کن
+import 'chatroom_page.dart'; // ✅ اضافه کردن صفحه چت
+import 'services/api_service.dart';
+import 'flutter_login_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -41,12 +44,55 @@ class HomePage extends StatelessWidget {
     debugPrint('Current Shift pressed');
   }
 
+  void _openChatroom(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const ChatroomPage()),
+    );
+  }
+
+  void _logout(BuildContext context) async {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              await ApiService.removeAuthToken();
+              if (context.mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const LoginPage()),
+                  (route) => false,
+                );
+              }
+            },
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Katawaz Exchange - Home'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => _logout(context),
+            tooltip: 'Logout',
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(20),
@@ -60,6 +106,7 @@ class HomePage extends StatelessWidget {
             _buildButton(Icons.list_alt, 'List Transactions', ()=>  _listTransactions(context)),
             _buildButton(Icons.add_circle, 'Add Transaction', _addTransaction),
             _buildButton(Icons.timer, 'Current Shift', _currentShift),
+            _buildButton(Icons.chat, 'Chat Room', () => _openChatroom(context)),
           ],
         ),
       ),

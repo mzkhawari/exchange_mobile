@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'flutter_login_page.dart'; // 👈 فایل صفحه لاگین خودت که من قبلاً برات نوشتم
+import 'home_page.dart';
+import 'services/api_service.dart';
 import 'dart:io';
-import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -23,10 +23,27 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Katawaz Exchange',
-      home: LoginPage(), // 👈 اجرای صفحه لاگین خودمون
+      home: FutureBuilder<bool>(
+        future: ApiService.isLoggedIn(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              body: Center(
+                child: CircularProgressIndicator(),
+              ),
+            );
+          }
+          
+          if (snapshot.data == true) {
+            return const HomePage(); // User is logged in
+          } else {
+            return const LoginPage(); // Show login page
+          }
+        },
+      ),
     );
   }
 }

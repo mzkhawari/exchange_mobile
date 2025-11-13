@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'home_page.dart'; // صفحه بعد از لاگین
+import 'services/api_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -24,7 +25,7 @@ class _LoginPageState extends State<LoginPage> {
       _errorMessage = null;
     });
 
-    final url = Uri.parse('https://api1.katawazexchange.com/api/auth/login');
+    final url = Uri.parse('https://209.42.25.31:7179/api/auth/login'); //209.42.25.31:7179/
     final body = {
       'UserName': _usernameController.text,
       'Password': _passwordController.text,
@@ -40,25 +41,83 @@ class _LoginPageState extends State<LoginPage> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('user_data', jsonEncode(data));
-
-        // رفتن به صفحه اصلی
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const HomePage()),
-          );
+        print('Login response: $data'); // Debug print
+      
+        // Check if we received a token
+        String? token;
+        if (data['token'] != null) {
+          // Handle both string token and object token
+          if (data['token'] is String) {
+            token = data['token'];
+          } else if (data['token'] is Map && data['token']['accessToken'] != null) {
+            token = data['token']['accessToken'];
+          } else if (data['token'] is Map && data['token']['access_token'] != null) {
+            token = data['token']['access_token'];
+          } else {
+            token = data['token'].toString();
+          }
+        }
+        
+        if (token != null && token.isNotEmpty) {
+          // Save the token using ApiService
+          await ApiService.setAuthToken(token);
+          
+          // Save login response data first
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('login_response', jsonEncode(data));
+          
+          // Try to get user info using the token
+          final userInfo = await ApiService.getUserInfo();
+          
+          String welcomeName = 'User';
+          if (userInfo != null) {
+            // Save complete user data if API call succeeds
+            await prefs.setString('user_data', jsonEncode(userInfo));
+            welcomeName = userInfo['firstName'] ?? 'User';
+          } else if (data['currentUser'] != null) {
+            // Use user data from login response if getUserInfo fails
+            await prefs.setString('user_data', jsonEncode(data['currentUser']));
+            welcomeName = data['currentUser']['firstName'] ?? 'User';
+          }
+          
+          // Show success message
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Welcome $welcomeName!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+          
+          // Navigate to home page - always navigate if login successful
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (_) => const HomePage()),
+            );
+          }
+        } else {
+          setState(() {
+            _errorMessage = 'No authentication token received.';
+          });
         }
       } else {
+        // Handle different error codes
+        final errorData = jsonDecode(response.body);
         setState(() {
-          _errorMessage = 'Invalid username or password.';
+          _errorMessage = errorData['message'] ?? 'Invalid username or password.';
         });
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Error: $e';
+        if (e.toString().contains('type') && e.toString().contains('subtype')) {
+          _errorMessage = 'Server response format error. Please try again.';
+        } else {
+          _errorMessage = 'Connection error. Please check your internet connection.';
+        }
       });
+      debugPrint('Login error: $e');
     } finally {
       setState(() => _isLoading = false);
     }
