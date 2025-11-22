@@ -25,7 +25,7 @@ class _LoginPageState extends State<LoginPage> {
       _errorMessage = null;
     });
 
-    final url = Uri.parse('https://209.42.25.31:7179/api/auth/login'); //209.42.25.31:7179/
+    final url = Uri.parse('https://10.0.2.2:7179/api/auth/login'); //10.0.2.2:7179 for Android emulator
     final body = {
       'UserName': _usernameController.text,
       'Password': _passwordController.text,

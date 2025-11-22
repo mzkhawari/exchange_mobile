@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'services/api_service.dart';
 import 'services/voice_recorder_service.dart';
@@ -39,6 +40,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
   @override
   void initState() {
     super.initState();
+    
+    // Log API configuration for this session
+    ApiService.logCurrentConfig();
+    
     _initializeChat();
     _loadUserData().then((_) {
       // Always load available users, regardless of authentication status
@@ -172,48 +177,107 @@ class _ChatroomPageState extends State<ChatroomPage> {
   void _initializeChat() {
     _messages = [
       ChatMessage(
+        id: 1,
+        value: 'Welcome to Katawaz Exchange! 👋',
+        date: DateTime.now().subtract(const Duration(minutes: 30)),
+        userId: 0,
+        isSent: true,
+        status: 'Delivered',
+        isMine: false,
         sender: 'Admin',
-        message: 'Welcome to Katawaz Exchange! 👋',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 30)),
-        isMe: false,
         messageType: MessageType.text,
       ),
       ChatMessage(
+        id: 2,
+        value: 'Exchange rates updated successfully ✅',
+        date: DateTime.now().subtract(const Duration(minutes: 15)),
+        userId: 0,
+        isSent: true,
+        status: 'Delivered',
+        isMine: false,
         sender: 'System',
-        message: 'Exchange rates updated successfully ✅',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 15)),
-        isMe: false,
         messageType: MessageType.text,
       ),
       ChatMessage(
+        id: 3,
+        value: 'How can we help you today?',
+        date: DateTime.now().subtract(const Duration(minutes: 5)),
+        userId: 0,
+        isSent: true,
+        status: 'Delivered',
+        isMine: false,
         sender: 'Support',
-        message: 'How can we help you today?',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
-        isMe: false,
         messageType: MessageType.text,
       ),
     ];
   }
 
   Future<void> _loadChatMessages() async {
-    // Only load messages from API if user is authenticated and chatMasterId is available
+    // Only load messages from API if user is authenticated and userId is available
     if (_userInfo != null && _chatMasterId != null) {
       try {
-        final messages = await ApiService.getChatDetails(_chatMasterId!);
-        if (messages != null && messages.isNotEmpty) {
-          setState(() {
-            _messages.addAll(messages.map((msg) => ChatMessage(
-              sender: msg['senderName'] ?? msg['sender'] ?? 'Unknown',
-              message: msg['messageText'] ?? msg['message'] ?? '',
-              timestamp: DateTime.tryParse(msg['createdAt'] ?? msg['timestamp'] ?? '') ?? DateTime.now(),
-              isMe: msg['senderId'] == _userInfo?['id'],
-              messageType: _getMessageType(msg['messageType'] ?? 'Text'),
-              filePath: msg['voiceFilePath'] ?? msg['attachmentFilePath'],
-              duration: msg['duration'],
-              messageId: msg['id'],
-              status: msg['status'],
-            )));
-          });
+        print('🔍 DEBUG Line 207: _userInfo ID = ${_userInfo!['id']}');
+        print('🔍 DEBUG Line 207: _chatMasterId = $_chatMasterId');
+        print('🔍 DEBUG Line 207: Selected user = $_selectedUser');
+        // Use the selected user's ID (_chatMasterId) instead of current user's ID
+        final response = await ApiService.getChatDetails(_chatMasterId!);
+        if (response != null) {
+          // Extract ChatMasterId from API response - this is unique for each chat partner
+          final chatMasterId = response['chatMasterId'];
+          final messages = response['messages'] as List<Map<String, dynamic>>? ?? [];
+          
+          if (chatMasterId != null) {
+            _chatMasterId = chatMasterId;
+            print('🔍 Updated _chatMasterId from getChatDetails: $_chatMasterId');
+          }
+          
+          if (messages.isNotEmpty) {
+            setState(() {
+              _messages.addAll(messages.map((msg) {
+                // Parse new API format with proper type conversion
+                final messageId = int.tryParse((msg['Id'] ?? msg['id'] ?? 0).toString()) ?? 0;
+                final messageValue = (msg['Value'] ?? msg['value'] ?? '').toString();
+                final fileUrl = msg['FileUrl']?.toString();
+                final fileUrlThumb = msg['FileUrlThumb']?.toString();
+                final dateString = (msg['Date'] ?? msg['date'] ?? '').toString();
+                final messageDate = DateTime.tryParse(dateString) ?? DateTime.now();
+                final senderId = int.tryParse((msg['UserId'] ?? msg['userId'] ?? 0).toString()) ?? 0;
+                final isSent = (msg['IsSent'] ?? msg['isSent'] ?? false) == true;
+                final messageStatus = (msg['Status'] ?? msg['status'] ?? 'None').toString();
+                final isMine = (msg['IsMine'] ?? msg['isMine'] ?? false) == true;
+                
+                // Determine message type based on file URL
+                MessageType msgType = MessageType.text;
+                if (fileUrl != null) {
+                  if (fileUrl.toString().toLowerCase().contains('.mp3') || 
+                      fileUrl.toString().toLowerCase().contains('.wav') ||
+                      fileUrl.toString().toLowerCase().contains('.m4a')) {
+                    msgType = MessageType.voice;
+                  } else if (fileUrl.toString().toLowerCase().contains('.jpg') ||
+                           fileUrl.toString().toLowerCase().contains('.png') ||
+                           fileUrl.toString().toLowerCase().contains('.jpeg')) {
+                    msgType = MessageType.image;
+                  } else {
+                    msgType = MessageType.file;
+                  }
+                }
+                
+                return ChatMessage(
+                  id: messageId,
+                  value: messageValue,
+                  fileUrl: fileUrl,
+                  fileUrlThumb: fileUrlThumb,
+                  date: messageDate,
+                  userId: senderId,
+                  isSent: isSent,
+                  status: messageStatus,
+                  isMine: isMine,
+                  sender: isMine ? _currentUserName : (_selectedUser?['firstName'] ?? 'Unknown'),
+                  messageType: msgType,
+                );
+              }));
+            });
+          }
         }
       } catch (e) {
         print('Error loading chat messages: $e');
@@ -222,10 +286,14 @@ class _ChatroomPageState extends State<ChatroomPage> {
       // Guest mode - show welcome message
       setState(() {
         _messages.add(ChatMessage(
+          id: 0,
+          value: 'Welcome to the chat room! You are in guest mode. Login to sync with your conversations.',
+          date: DateTime.now(),
+          userId: 0,
+          isSent: true,
+          status: 'Delivered',
+          isMine: false,
           sender: 'System',
-          message: 'Welcome to the chat room! You are in guest mode. Login to sync with your conversations.',
-          timestamp: DateTime.now(),
-          isMe: false,
           messageType: MessageType.text,
         ));
       });
@@ -305,10 +373,14 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
     final messageText = _messageController.text.trim();
     final message = ChatMessage(
+      id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
+      value: messageText,
+      date: DateTime.now(),
+      userId: _userInfo?['id'] ?? 0,
+      isSent: false, // Will be updated after API call
+      status: 'None',
+      isMine: true,
       sender: _currentUserName,
-      message: messageText,
-      timestamp: DateTime.now(),
-      isMe: true,
       messageType: MessageType.text,
     );
 
@@ -324,7 +396,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
       try {
         final result = await ApiService.postChatDetail(
           chatMasterId: _chatMasterId!,
-          messageText: messageText,
+          value: messageText,
         );
         
         if (result == null) {
@@ -418,12 +490,16 @@ class _ChatroomPageState extends State<ChatroomPage> {
       
       // Create voice message
       final voiceMessage = ChatMessage(
+        id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
+        value: 'Voice message',
+        date: DateTime.now(),
+        userId: _userInfo?['id'] ?? 0,
+        isSent: false, // Will be updated after API call
+        status: 'None',
+        isMine: true,
+        fileUrl: recordingPath,
         sender: _currentUserName,
-        message: 'Voice message',
-        timestamp: DateTime.now(),
-        isMe: true,
         messageType: MessageType.voice,
-        filePath: recordingPath,
         duration: duration,
       );
 
@@ -434,10 +510,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
       _scrollToBottom();
       
       // Send voice message to API if authenticated and chatMasterId available
-      if (_userInfo != null && _chatMasterId != null) {
+      if (_userInfo != null && _chatMasterId != null && _selectedUser != null) {
         try {
+          print('🎤 DEBUG: Sending voice message...');
+          print('🎤 DEBUG: Recording path: $recordingPath');
+          print('🎤 DEBUG: File exists: ${await File(recordingPath).exists()}');
+          print('🎤 DEBUG: File size: ${await File(recordingPath).length()} bytes');
+          print('🎤 DEBUG: ChatMasterId: $_chatMasterId');
+          
           final result = await ApiService.postChatDetail(
             chatMasterId: _chatMasterId!,
+            value: 'Voice message', // API requires value field
             voiceFilePath: recordingPath,
           );
           
@@ -476,11 +559,23 @@ class _ChatroomPageState extends State<ChatroomPage> {
           );
         }
       } else {
-        // Show success feedback for guest mode
+        // Show error if requirements not met
+        String errorMessage = '';
+        if (_userInfo == null) {
+          errorMessage = 'Please login to send voice messages';
+        } else if (_selectedUser == null) {
+          errorMessage = 'Please select a user to send voice message to';
+        } else if (_chatMasterId == null) {
+          errorMessage = 'Chat not initialized properly';
+        } else {
+          errorMessage = 'Voice message sent in guest mode!';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Voice message sent!'),
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: errorMessage.contains('guest') ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -504,12 +599,16 @@ class _ChatroomPageState extends State<ChatroomPage> {
       
       if (photo != null) {
         final imageMessage = ChatMessage(
+          id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
+          value: 'Photo',
+          date: DateTime.now(),
+          userId: _userInfo?['id'] ?? 0,
+          isSent: false, // Will be updated after API call
+          status: 'None',
+          isMine: true,
+          fileUrl: photo.path,
           sender: _currentUserName,
-          message: 'Photo',
-          timestamp: DateTime.now(),
-          isMe: true,
           messageType: MessageType.image,
-          filePath: photo.path,
         );
 
         setState(() {
@@ -519,10 +618,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
         _scrollToBottom();
         
         // Send photo to API if authenticated and chatMasterId available
-        if (_userInfo != null && _chatMasterId != null) {
+        if (_userInfo != null && _chatMasterId != null && _selectedUser != null) {
           try {
+            print('📸 DEBUG: Sending photo...');
+            print('📸 DEBUG: Photo path: ${photo.path}');
+            print('📸 DEBUG: File exists: ${await File(photo.path).exists()}');
+            print('📸 DEBUG: File size: ${await File(photo.path).length()} bytes');
+            print('📸 DEBUG: ChatMasterId: $_chatMasterId');
+            
             final result = await ApiService.postChatDetail(
               chatMasterId: _chatMasterId!,
+              value: 'Photo', // API requires value field
               attachmentFilePath: photo.path,
               attachmentType: 'Image',
             );
@@ -560,10 +666,23 @@ class _ChatroomPageState extends State<ChatroomPage> {
             );
           }
         } else {
+          // Show error if requirements not met
+          String errorMessage = '';
+          if (_userInfo == null) {
+            errorMessage = 'Please login to send photos';
+          } else if (_selectedUser == null) {
+            errorMessage = 'Please select a user to send photo to';
+          } else if (_chatMasterId == null) {
+            errorMessage = 'Chat not initialized properly';
+          } else {
+            errorMessage = 'Photo sent in guest mode!';
+          }
+          
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Photo sent!'),
-              duration: Duration(seconds: 2),
+            SnackBar(
+              content: Text(errorMessage),
+              backgroundColor: errorMessage.contains('guest') ? Colors.green : Colors.orange,
+              duration: const Duration(seconds: 2),
             ),
           );
         }
@@ -589,12 +708,16 @@ class _ChatroomPageState extends State<ChatroomPage> {
       
       if (image != null) {
         final imageMessage = ChatMessage(
+          id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
+          value: 'Image',
+          date: DateTime.now(),
+          userId: _userInfo?['id'] ?? 0,
+          isSent: false, // Will be updated after API call
+          status: 'None',
+          isMine: true,
+          fileUrl: image.path,
           sender: _currentUserName,
-          message: 'Image',
-          timestamp: DateTime.now(),
-          isMe: true,
           messageType: MessageType.image,
-          filePath: image.path,
         );
 
         setState(() {
@@ -604,10 +727,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
         _scrollToBottom();
         
         // Send image to API if authenticated and chatMasterId available
-        if (_userInfo != null && _chatMasterId != null) {
+        if (_userInfo != null && _chatMasterId != null && _selectedUser != null) {
           try {
+            print('🖼️ DEBUG: Sending gallery image...');
+            print('🖼️ DEBUG: Image path: ${image.path}');
+            print('🖼️ DEBUG: File exists: ${await File(image.path).exists()}');
+            print('🖼️ DEBUG: File size: ${await File(image.path).length()} bytes');
+            print('🖼️ DEBUG: ChatMasterId: $_chatMasterId');
+            
             final result = await ApiService.postChatDetail(
               chatMasterId: _chatMasterId!,
+              value: 'Image', // API requires value field
               attachmentFilePath: image.path,
               attachmentType: 'Image',
             );
@@ -645,10 +775,23 @@ class _ChatroomPageState extends State<ChatroomPage> {
             );
           }
         } else {
+          // Show error if requirements not met
+          String errorMessage = '';
+          if (_userInfo == null) {
+            errorMessage = 'Please login to send images';
+          } else if (_selectedUser == null) {
+            errorMessage = 'Please select a user to send image to';
+          } else if (_chatMasterId == null) {
+            errorMessage = 'Chat not initialized properly';
+          } else {
+            errorMessage = 'Image sent in guest mode!';
+          }
+          
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Image sent!'),
-              duration: Duration(seconds: 2),
+            SnackBar(
+              content: Text(errorMessage),
+              backgroundColor: errorMessage.contains('guest') ? Colors.green : Colors.orange,
+              duration: const Duration(seconds: 2),
             ),
           );
         }
@@ -803,14 +946,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
     if (_isLoading || _isLoadingUsers) {
       return Scaffold(
         appBar: AppBar(
-          backgroundColor: const Color(0xFF075E54),
-          title: const Text('Chat', style: TextStyle(color: Colors.white)),
-          iconTheme: const IconThemeData(color: Colors.white),
+          title: const Text('Chat'),
         ),
         body: const Center(
-          child: CircularProgressIndicator(
-            color: Color(0xFF075E54),
-          ),
+          child: CircularProgressIndicator(),
         ),
       );
     }
@@ -818,9 +957,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF075E54),
-        title: const Text('Katawaz Exchange Chat', style: TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Katawaz Exchange Chat'),
+            if (kDebugMode)
+              Text(
+                '${ApiService.currentEnvironment} - ${ApiService.baseUrl}',
+                style: const TextStyle(fontSize: 10),
+              ),
+          ],
+        ),
         elevation: 1,
       ),
       body: Row(
@@ -839,9 +986,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 // Toggle icon at top
                 Container(
                   height: 60,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF075E54),
-                    border: Border(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary,
+                    border: const Border(
                       bottom: BorderSide(color: Color(0xFFE0E0E0), width: 1),
                     ),
                   ),
@@ -1068,7 +1215,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 padding: const EdgeInsets.all(8.0),
                 child: CircleAvatar(
                   radius: 30,
-                  backgroundColor: const Color(0xFF075E54),
+                  backgroundColor: Colors.grey[400],
                   backgroundImage: avatarUrl.isNotEmpty 
                     ? NetworkImage(avatarUrl) 
                     : null,
@@ -1226,12 +1373,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
           // Messages area
           Expanded(
             child: Container(
-              decoration: const BoxDecoration(
-                image: DecorationImage(
-                  image: AssetImage('assets/whatsapp_bg.png'),
-                  fit: BoxFit.cover,
-                  opacity: 0.05,
-                ),
+              decoration: BoxDecoration(
+                color: Colors.grey[100], // Simple background color instead
               ),
               child: ListView.builder(
                 controller: _scrollController,
@@ -1594,19 +1737,15 @@ class _ChatroomPageState extends State<ChatroomPage> {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         Text(
-                          _formatTime(message.timestamp),
+                          _formatTime(message.date), // Use date field from new API format
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey[600],
                           ),
                         ),
-                        if (message.isMe) ...[
+                        if (message.isMine) ...[
                           const SizedBox(width: 4),
-                          Icon(
-                            Icons.done_all, // Double check mark
-                            size: 16,
-                            color: Colors.blue[700], // Read receipt
-                          ),
+                          _buildMessageStatusIcon(message),
                         ],
                       ],
                     ),
@@ -1631,11 +1770,63 @@ class _ChatroomPageState extends State<ChatroomPage> {
       case MessageType.text:
       default:
         return Text(
-          message.message,
+          message.value, // Use value field from new API format
           style: const TextStyle(
             fontSize: 16,
             color: Colors.black87,
           ),
+        );
+    }
+  }
+
+  Widget _buildMessageStatusIcon(ChatMessage message) {
+    // Show status only for messages sent by current user
+    if (!message.isMine) return const SizedBox.shrink();
+    
+    if (!message.isSent) {
+      // Message not sent yet (sending...)
+      return const SizedBox(
+        width: 12,
+        height: 12,
+        child: CircularProgressIndicator(
+          strokeWidth: 1.5,
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.grey),
+        ),
+      );
+    }
+    
+    // Message sent successfully, show status based on Status field
+    switch (message.status.toLowerCase()) {
+      case 'seen':
+        return Icon(
+          Icons.done_all,
+          size: 16,
+          color: Colors.blue[700], // Blue for seen/read
+        );
+      case 'delivered':
+        return Icon(
+          Icons.done_all,
+          size: 16,
+          color: Colors.grey[600], // Grey for delivered but not read
+        );
+      case 'listen': // For voice messages
+        return Icon(
+          Icons.headset,
+          size: 14,
+          color: Colors.blue[700],
+        );
+      case 'watch': // For images/videos
+        return Icon(
+          Icons.visibility,
+          size: 14,
+          color: Colors.blue[700],
+        );
+      case 'none':
+      default:
+        return Icon(
+          Icons.done,
+          size: 16,
+          color: Colors.grey[600], // Single check for sent
         );
     }
   }
@@ -1761,11 +1952,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
                   ),
             ),
           ),
-          if (message.message.isNotEmpty && message.message != 'Photo' && message.message != 'Image')
+          if (message.value.isNotEmpty && message.value != 'Photo' && message.value != 'Image')
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                message.message,
+                message.value, // Use value field from new API format
                 style: const TextStyle(fontSize: 14, color: Colors.black87),
               ),
             ),
@@ -1798,7 +1989,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  message.message,
+                  message.value, // Use value field from new API format
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
@@ -1852,16 +2043,19 @@ class _ChatroomPageState extends State<ChatroomPage> {
       final messageIndex = _messages.indexOf(message);
       if (messageIndex != -1) {
         _messages[messageIndex] = ChatMessage(
+          id: message.id,
+          value: message.value,
+          fileUrl: message.fileUrl,
+          fileUrlThumb: message.fileUrlThumb,
+          date: message.date,
+          userId: message.userId,
+          isSent: message.isSent,
+          status: message.status,
+          isMine: message.isMine,
           sender: message.sender,
-          message: message.message,
-          timestamp: message.timestamp,
-          isMe: message.isMe,
           messageType: message.messageType,
-          filePath: message.filePath,
           duration: message.duration,
           isPlaying: !isCurrentlyPlaying,
-          messageId: message.messageId,
-          status: message.status,
         );
       }
     });
@@ -1956,27 +2150,42 @@ enum MessageType {
 }
 
 class ChatMessage {
+  final int id;            // Message ID from API
+  final String value;      // Message text content
+  final String? fileUrl;   // Full file URL
+  final String? fileUrlThumb; // Thumbnail URL for files
+  final DateTime date;     // Message date
+  final int userId;        // Sender's user ID
+  final bool isSent;       // Whether message was sent successfully
+  final String status;     // Message status (None, Delivered, Seen, etc.)
+  final bool isMine;       // Whether current user sent this message
+  
+  // Additional UI properties
   final String sender;
-  final String message;
-  final DateTime timestamp;
-  final bool isMe;
   final MessageType messageType;
-  final String? filePath;  // For voice messages and files
   final Duration? duration; // For voice messages
   final bool? isPlaying;   // For voice message playback state
-  final int? messageId;    // API message ID for status updates
-  final String? status;    // Message status: Delivered, Seen, Listen, Watch
 
   ChatMessage({
+    required this.id,
+    required this.value,
+    required this.date,
+    required this.userId,
+    required this.isSent,
+    required this.status,
+    required this.isMine,
+    this.fileUrl,
+    this.fileUrlThumb,
     required this.sender,
-    required this.message,
-    required this.timestamp,
-    required this.isMe,
     this.messageType = MessageType.text,
-    this.filePath,
     this.duration,
     this.isPlaying,
-    this.messageId,
-    this.status,
   });
+  
+  // Backward compatibility getters
+  String get message => value;
+  DateTime get timestamp => date;
+  bool get isMe => isMine;
+  String? get filePath => fileUrl;
+  int? get messageId => id;
 }

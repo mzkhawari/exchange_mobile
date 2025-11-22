@@ -1,10 +1,38 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
 
 class ApiService {
-  static const String baseUrl = 'https://209.42.25.31:7179/api';
-  static const String baseImageUrl = 'https://209.42.25.31:7179';
+  // API Configuration for different environments
+  // Note: Android emulators use 10.0.2.2 to connect to host machine's localhost
+  static const String _debugBaseUrl = 'https://10.0.2.2:7179/api';
+  static const String _debugImageUrl = 'https://10.0.2.2:7179';
+  static const String _releaseBaseUrl = 'https://10.0.2.2:7179/api';
+  static const String _releaseImageUrl = 'https://10.0.2.2:7179';
+  
+  // Get current base URL based on build mode
+  static String get baseUrl {
+    return kDebugMode ? _debugBaseUrl : _releaseBaseUrl;
+  }
+  
+  // Get current image URL based on build mode  
+  static String get baseImageUrl {
+    return kDebugMode ? _debugImageUrl : _releaseImageUrl;
+  }
+  
+  // Get current environment info
+  static String get currentEnvironment {
+    return kDebugMode ? 'DEBUG' : 'RELEASE';
+  }
+  
+  // Initialize and log current configuration
+  static void logCurrentConfig() {
+    print('🌍 API Environment: ${currentEnvironment}');
+    print('🔗 Base URL: ${baseUrl}');
+    print('🖼️ Image URL: ${baseImageUrl}');
+  }
   
   // Get stored auth token
   static Future<String?> getAuthToken() async {
@@ -24,6 +52,34 @@ class ApiService {
     await prefs.remove('auth_token');
     await prefs.remove('user_data');
     await prefs.remove('login_response');
+  }
+
+  // Handle 401 Unauthorized error - clear all data and redirect to login
+  static Future<void> handle401Unauthorized() async {
+    print('🚨 401 Unauthorized: Token expired or invalid');
+    
+    // Clear all stored authentication data
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('auth_token');
+    await prefs.remove('user_data');
+    await prefs.remove('login_response');
+    
+    print('✅ All authentication data cleared');
+    
+    // Set flag to redirect to login
+    await prefs.setBool('should_redirect_to_login', true);
+    
+    print('🔄 Login redirect flag set');
+  }
+
+  // Check if should redirect to login (for use in app initialization)
+  static Future<bool> shouldRedirectToLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final shouldRedirect = prefs.getBool('should_redirect_to_login') ?? false;
+    if (shouldRedirect) {
+      await prefs.remove('should_redirect_to_login'); // Clear flag after checking
+    }
+    return shouldRedirect;
   }
   
   // Get stored user data
@@ -62,8 +118,8 @@ class ApiService {
       cleanPath = '/$cleanPath';
     }
     
-    // Construct the full URL
-    final fullUrl = '$baseImageUrl$cleanPath';
+    // Construct the full URL using the correct image URL
+    final fullUrl = '${currentEnvironment == 'DEBUG' ? _debugImageUrl : _releaseImageUrl}$cleanPath';
     print('Avatar URL constructed: $fullUrl'); // Debug log
     return fullUrl;
   }
@@ -86,7 +142,30 @@ class ApiService {
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        print('getUserInfo API response: $data');
+        print('═══════════════════════════════════════════════════════════');
+        print('🔍 getUserInfo API Response Details:');
+        print('📍 Endpoint: $baseUrl/user/getUserInfo');
+        print('📊 Status Code: ${response.statusCode}');
+        print('📋 Response Type: ${data.runtimeType}');
+        print('📄 Raw Response Body: ${response.body}');
+        print('🔧 Parsed Data: $data');
+        
+        if (data is List) {
+          print('📝 Response is List with ${data.length} items');
+          if (data.isNotEmpty) {
+            print('👤 First User Data: ${data[0]}');
+          }
+        } else if (data is Map) {
+          print('📝 Response is Map object');
+          print('🔑 Keys Available: ${data.keys.toList()}');
+          if (data.containsKey('id')) print('👤 User ID: ${data['id']}');
+          if (data.containsKey('firstName')) print('👤 First Name: ${data['firstName']}');
+          if (data.containsKey('lastName')) print('👤 Last Name: ${data['lastName']}');
+          if (data.containsKey('email')) print('📧 Email: ${data['email']}');
+          if (data.containsKey('userName')) print('🏷️ Username: ${data['userName']}');
+          if (data.containsKey('picUrlAvatar')) print('🖼️ Avatar URL: ${data['picUrlAvatar']}');
+        }
+        print('═══════════════════════════════════════════════════════════');
         
         // Handle different response structures
         if (data is List && data.isNotEmpty) {
@@ -99,8 +178,8 @@ class ApiService {
         
         return null;
       } else if (response.statusCode == 401) {
-        // Token expired, remove it
-        await removeAuthToken();
+        // Handle 401 Unauthorized - clear data and flag for redirect
+        await handle401Unauthorized();
         return null;
       } else {
         throw Exception('Failed to load user info: ${response.statusCode}');
@@ -114,6 +193,11 @@ class ApiService {
   // Login method
   static Future<Map<String, dynamic>?> login(String username, String password, {bool isRemember = false}) async {
     try {
+      print('🔐 LOGIN DEBUG: Environment = ${currentEnvironment}');
+      print('🔐 LOGIN DEBUG: baseUrl = $baseUrl');
+      print('🔐 LOGIN DEBUG: Full login URL = $baseUrl/auth/login');
+      print('🔐 LOGIN DEBUG: kDebugMode = ${kDebugMode}');
+      
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'),
         headers: {
@@ -235,8 +319,8 @@ class ApiService {
         
         return [];
       } else if (response.statusCode == 401) {
-        // Token expired, remove it
-        await removeAuthToken();
+        // Handle 401 Unauthorized
+        await handle401Unauthorized();
         print('Token expired while getting users');
         return [];
       } else {
@@ -252,7 +336,7 @@ class ApiService {
   // Post chat detail (message/voice/attachment)
   static Future<Map<String, dynamic>?> postChatDetail({
     required int chatMasterId,
-    String? messageText,
+    String? value,
     String? voiceFilePath,
     String? attachmentFilePath,
     String? attachmentType,
@@ -266,7 +350,7 @@ class ApiService {
 
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('$baseUrl/chat/postChatDetail'),
+        Uri.parse('$baseUrl/chatDetail/postChatDetail'),
       );
 
       // Add headers
@@ -275,28 +359,52 @@ class ApiService {
       // Add form fields
       request.fields['chatMasterId'] = chatMasterId.toString();
       
-      if (messageText != null && messageText.isNotEmpty) {
-        request.fields['messageText'] = messageText;
+      // Always include value field - API requires it
+      if (value != null && value.isNotEmpty) {
+        request.fields['value'] = value;
         request.fields['messageType'] = 'Text';
+      } else {
+        // For attachments without text, send "_" as default value
+        request.fields['value'] = '_';
       }
 
       // Add voice file if provided
       if (voiceFilePath != null) {
-        request.files.add(
-          await http.MultipartFile.fromPath('voiceFile', voiceFilePath),
-        );
-        request.fields['messageType'] = 'Voice';
+        print('🎤 API DEBUG: Adding voice file: $voiceFilePath');
+        final file = File(voiceFilePath);
+        if (await file.exists()) {
+          final fileSize = await file.length();
+          print('🎤 API DEBUG: Voice file exists, size: $fileSize bytes');
+          request.files.add(
+            await http.MultipartFile.fromPath('voiceFile', voiceFilePath),
+          );
+          request.fields['messageType'] = 'Voice';
+          print('🎤 API DEBUG: Voice file added to request successfully');
+        } else {
+          print('🎤 API DEBUG ERROR: Voice file does not exist at path: $voiceFilePath');
+          return null;
+        }
       }
 
       // Add attachment file if provided
       if (attachmentFilePath != null) {
-        request.files.add(
-          await http.MultipartFile.fromPath('attachmentFile', attachmentFilePath),
-        );
-        request.fields['messageType'] = attachmentType ?? 'Document';
+        print('🖼️ API DEBUG: Adding attachment file: $attachmentFilePath');
+        final file = File(attachmentFilePath);
+        if (await file.exists()) {
+          final fileSize = await file.length();
+          print('🖼️ API DEBUG: Attachment file exists, size: $fileSize bytes');
+          request.files.add(
+            await http.MultipartFile.fromPath('attachmentFile', attachmentFilePath),
+          );
+          request.fields['messageType'] = attachmentType ?? 'Document';
+          print('🖼️ API DEBUG: Attachment file added to request successfully');
+        } else {
+          print('🖼️ API DEBUG ERROR: Attachment file does not exist at path: $attachmentFilePath');
+          return null;
+        }
       }
 
-      print('Sending chat detail: chatMasterId=$chatMasterId, messageText=$messageText, voiceFile=$voiceFilePath, attachmentFile=$attachmentFilePath');
+      print('Sending chat detail: chatMasterId=$chatMasterId, value=$value, voiceFile=$voiceFilePath, attachmentFile=$attachmentFilePath');
 
       final response = await request.send();
       final responseBody = await response.stream.bytesToString();
@@ -305,6 +413,10 @@ class ApiService {
         final data = json.decode(responseBody);
         print('postChatDetail success: $data');
         return Map<String, dynamic>.from(data);
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('Token expired while posting chat detail');
+        return null;
       } else {
         print('Failed to post chat detail: ${response.statusCode} - $responseBody');
         return null;
@@ -315,8 +427,8 @@ class ApiService {
     }
   }
 
-  // Get chat details by chatMasterId
-  static Future<List<Map<String, dynamic>>?> getChatDetails(int chatMasterId) async {
+  // Get chat details by userId - returns both messages and ChatMasterId
+  static Future<Map<String, dynamic>?> getChatDetails(int userId) async {
     try {
       final token = await getAuthToken();
       if (token == null || token.isEmpty) {
@@ -325,7 +437,7 @@ class ApiService {
       }
 
       final response = await http.get(
-        Uri.parse('$baseUrl/chat/getChatDetails?chatMasterId=$chatMasterId'),
+        Uri.parse('$baseUrl/ChatDetail/getChatDetails?targetUserId=$userId'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -336,17 +448,42 @@ class ApiService {
         final data = json.decode(response.body);
         print('getChatDetails API response: $data');
         
-        if (data is List) {
-          return List<Map<String, dynamic>>.from(data);
-        } else if (data is Map && data['data'] != null) {
-          return List<Map<String, dynamic>>.from(data['data']);
-        } else if (data is Map && data['messages'] != null) {
-          return List<Map<String, dynamic>>.from(data['messages']);
+        // Extract ChatMasterId from the response
+        int? chatMasterId;
+        List<Map<String, dynamic>> messages = [];
+        
+        if (data is Map) {
+          // Extract ChatMasterId from response
+          chatMasterId = data['chatMasterId'] ?? data['ChatMasterId'];
+          
+          // Extract messages from different possible response structures
+          if (data['data'] != null && data['data'] is List) {
+            messages = List<Map<String, dynamic>>.from(data['data']);
+          } else if (data['messages'] != null && data['messages'] is List) {
+            messages = List<Map<String, dynamic>>.from(data['messages']);
+          }
+          
+          // If ChatMasterId not found at root level, try to get it from first message
+          if (chatMasterId == null && messages.isNotEmpty) {
+            chatMasterId = messages.first['chatMasterId'] ?? messages.first['ChatMasterId'];
+          }
+        } else if (data is List) {
+          messages = List<Map<String, dynamic>>.from(data);
+          // Try to get ChatMasterId from first message
+          if (messages.isNotEmpty) {
+            chatMasterId = messages.first['chatMasterId'] ?? messages.first['ChatMasterId'];
+          }
         }
         
-        return [];
+        print('🔍 Extracted ChatMasterId: $chatMasterId');
+        print('🔍 Messages count: ${messages.length}');
+        
+        return {
+          'chatMasterId': chatMasterId,
+          'messages': messages,
+        };
       } else if (response.statusCode == 401) {
-        await removeAuthToken();
+        await handle401Unauthorized();
         print('Token expired while getting chat details');
         return null;
       } else {
@@ -388,6 +525,10 @@ class ApiService {
       if (response.statusCode == 200) {
         print('updateChatDetailStatus success: status=$status, ids=$chatDetailIds');
         return true;
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('Token expired while updating chat status');
+        return false;
       } else {
         print('Failed to update chat status: ${response.statusCode} - ${response.body}');
         return false;
@@ -397,4 +538,6 @@ class ApiService {
       return false;
     }
   }
+
+
 }

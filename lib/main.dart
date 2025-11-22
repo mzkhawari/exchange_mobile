@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'flutter_login_page.dart'; // 👈 فایل صفحه لاگین خودت که من قبلاً برات نوشتم
 import 'home_page.dart';
 import 'services/api_service.dart';
@@ -8,26 +9,47 @@ class MyHttpOverrides extends HttpOverrides {
   @override
   HttpClient createHttpClient(SecurityContext? context) {
     return super.createHttpClient(context)
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
+        // Allow all certificates in debug mode, be more selective in release
+        if (host == 'localhost' || host == '127.0.0.1') {
+          return true; // Always allow localhost
+        }
+        return true; // Allow all for now, but you can make this more restrictive
+      };
   }
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  HttpOverrides.global = MyHttpOverrides();    
+  HttpOverrides.global = MyHttpOverrides();
+  
+  // Log current API configuration
+  ApiService.logCurrentConfig();
+      
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  // Check both login status and redirect flag
+  Future<Map<String, bool>> _checkAuthStatus() async {
+    final isLoggedIn = await ApiService.isLoggedIn();
+    final shouldRedirect = await ApiService.shouldRedirectToLogin();
+    
+    return {
+      'isLoggedIn': isLoggedIn,
+      'shouldRedirect': shouldRedirect,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Katawaz Exchange',
-      home: FutureBuilder<bool>(
-        future: ApiService.isLoggedIn(),
+      home: FutureBuilder<Map<String, bool>>(
+        future: _checkAuthStatus(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Scaffold(
@@ -37,10 +59,27 @@ class MyApp extends StatelessWidget {
             );
           }
           
-          if (snapshot.data == true) {
-            return const HomePage(); // User is logged in
+          final authData = snapshot.data ?? {'isLoggedIn': false, 'shouldRedirect': false};
+          final isLoggedIn = authData['isLoggedIn'] ?? false;
+          final shouldRedirect = authData['shouldRedirect'] ?? false;
+          
+          // If there's a redirect flag or user is not logged in, show login page
+          if (shouldRedirect || !isLoggedIn) {
+            if (shouldRedirect) {
+              // Show a message about session expiry
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Session expired. Please login again.'),
+                    backgroundColor: Colors.orange,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+              });
+            }
+            return const LoginPage();
           } else {
-            return const LoginPage(); // Show login page
+            return const HomePage();
           }
         },
       ),
