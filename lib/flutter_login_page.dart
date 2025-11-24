@@ -25,7 +25,7 @@ class _LoginPageState extends State<LoginPage> {
       _errorMessage = null;
     });
 
-    final url = Uri.parse('https://10.0.2.2:7179/api/auth/login'); //10.0.2.2:7179 for Android emulator
+    final url = Uri.parse('https://api1.katawazexchange.com/api/auth/login');
     final body = {
       'UserName': _usernameController.text,
       'Password': _passwordController.text,

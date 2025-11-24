@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'settings_page.dart';
 
 class CustomerListPage extends StatefulWidget {
   const CustomerListPage({super.key});
@@ -9,7 +12,7 @@ class CustomerListPage extends StatefulWidget {
 }
 
 class _CustomerListPageState extends State<CustomerListPage> {
-  final Dio dio = Dio(BaseOptions(baseUrl: "https://10.0.2.2:7179/api"));
+  final Dio dio = Dio(BaseOptions(baseUrl: "https://api1.katawazexchange.com/api"));
 
   int selectedStatus = 0; // 0=all, 1=awaiting, 2=confirmed
   int currentPage = 1;
@@ -18,11 +21,84 @@ class _CustomerListPageState extends State<CustomerListPage> {
   bool isLoading = false;
   String searchQuery = '';
   String baseUrlImages = 'https://katawazexchange.com/';
+  
+  // داده‌های تنظیمات
+  Map<String, String> _accountTypeNames = {};
+  Map<String, String> _identityTypeNames = {};
+  Map<String, String> _countryNames = {};
+  Map<String, String> _provinceNames = {};
+  Map<String, String> _zoneNames = {};
 
   @override
   void initState() {
     super.initState();
+    _loadSettingsData();
     fetchCustomers();
+  }
+  
+  /// بارگذاری داده‌های تنظیمات
+  Future<void> _loadSettingsData() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // بارگذاری انواع حساب
+    final accountTypesJson = prefs.getString('settings_account_types');
+    if (accountTypesJson != null) {
+      final accountTypes = List<Map<String, dynamic>>.from(jsonDecode(accountTypesJson));
+      setState(() {
+        _accountTypeNames = {
+          for (var item in accountTypes) 
+            item['id'].toString(): item['title']?.toString() ?? item['name']?.toString() ?? 'N/A'
+        };
+      });
+    }
+    
+    // بارگذاری انواع شناسنامه
+    final identityTypesJson = prefs.getString('settings_identity_types');
+    if (identityTypesJson != null) {
+      final identityTypes = List<Map<String, dynamic>>.from(jsonDecode(identityTypesJson));
+      setState(() {
+        _identityTypeNames = {
+          for (var item in identityTypes) 
+            item['id'].toString(): item['title']?.toString() ?? item['name']?.toString() ?? 'N/A'
+        };
+      });
+    }
+    
+    // بارگذاری کشورها
+    final countriesJson = prefs.getString('settings_countries');
+    if (countriesJson != null) {
+      final countries = List<Map<String, dynamic>>.from(jsonDecode(countriesJson));
+      setState(() {
+        _countryNames = {
+          for (var item in countries) 
+            item['id'].toString(): item['title']?.toString() ?? item['name']?.toString() ?? 'N/A'
+        };
+      });
+    }
+    
+    // بارگذاری استان‌ها
+    final provincesJson = prefs.getString('settings_provinces');
+    if (provincesJson != null) {
+      final provinces = List<Map<String, dynamic>>.from(jsonDecode(provincesJson));
+      setState(() {
+        _provinceNames = {
+          for (var item in provinces) 
+            item['id'].toString(): item['title']?.toString() ?? item['name']?.toString() ?? 'N/A'
+        };
+      });
+    }
+    
+    // بارگذاری مناطق
+    final zonesJson = prefs.getString('settings_zones');
+    if (zonesJson != null) {
+      final zones = List<Map<String, dynamic>>.from(jsonDecode(zonesJson));
+      setState(() {
+        _zoneNames = {
+          for (var item in zones) 
+            item['id'].toString(): item['title']?.toString() ?? item['name']?.toString() ?? 'N/A'
+        };
+      });
+    }
   }
 
   Future<void> fetchCustomers() async {
@@ -88,13 +164,20 @@ class _CustomerListPageState extends State<CustomerListPage> {
   }
 
   void showCustomerPopup(Map<String, dynamic> customer) {
+    // دریافت نام‌های قابل خواندن از داده‌های تنظیمات
+    final accountTypeName = _accountTypeNames[customer['accountTypeId']?.toString()] ?? 'نامشخص';
+    final identityTypeName = _identityTypeNames[customer['identityTypeId']?.toString()] ?? 'نامشخص';
+    final countryName = _countryNames[customer['countryId']?.toString()] ?? 'نامشخص';
+    final provinceName = _provinceNames[customer['provinceId']?.toString()] ?? 'نامشخص';
+    final zoneName = _zoneNames[customer['zoneId']?.toString()] ?? 'نامشخص';
+    
     showDialog(
       context: context,
       builder: (_) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.6,
+            maxHeight: MediaQuery.of(context).size.height * 0.7,
           ),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -102,14 +185,25 @@ class _CustomerListPageState extends State<CustomerListPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Header
-                Text(
-                  customer['fullName'] ?? 'Customer Details',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        customer['fullName'] ?? 'جزئیات مشتری',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
+                const Divider(),
+                const SizedBox(height: 8),
 
                 // Scrollable content
                 Expanded(
@@ -117,20 +211,59 @@ class _CustomerListPageState extends State<CustomerListPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // عکس پروفایل
                         if (customer['picUrlAvatar'] != null)
                           Center(
                             child: CircleAvatar(
-                              radius: 40,
-                              backgroundImage: NetworkImage( baseUrlImages + customer['picUrlAvatar']),
+                              radius: 50,
+                              backgroundImage: NetworkImage(baseUrlImages + customer['picUrlAvatar']),
                             ),
                           ),
-                        const SizedBox(height: 12),
-                        Text('Account No: ${customer['accountNo']}'),
-                        Text('Full Name: ${customer['firstName'] + customer['lastName']}'),
-                        Text('Phone: ${customer['phoneNumber'] ?? "-"}'),
-                        Text('Job: ${customer['job'] ?? "-"}'),
-                        Text('Account Type: ${customer['accountTypeId']}'),
-                        Text('Status: ${customer['statusText'] ?? selectedStatus}'),
+                        const SizedBox(height: 16),
+                        
+                        // اطلاعات شخصی
+                        _buildInfoSection(
+                          'اطلاعات شخصی',
+                          Icons.person,
+                          [
+                            _buildInfoRow('شماره حساب', customer['accountNo']?.toString() ?? '-'),
+                            _buildInfoRow('نام کامل', '${customer['firstName'] ?? ''} ${customer['lastName'] ?? ''}'),
+                            _buildInfoRow('شماره تماس', customer['phoneNumber']?.toString() ?? '-'),
+                            _buildInfoRow('شغل', customer['job']?.toString() ?? '-'),
+                            _buildInfoRow('نوع حساب', accountTypeName),
+                            _buildInfoRow('نوع شناسنامه', identityTypeName),
+                          ],
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // اطلاعات مکانی
+                        _buildInfoSection(
+                          'اطلاعات مکانی',
+                          Icons.location_on,
+                          [
+                            _buildInfoRow('کشور', countryName),
+                            _buildInfoRow('استان', provinceName),
+                            _buildInfoRow('منطقه', zoneName),
+                            if (customer['address'] != null)
+                              _buildInfoRow('آدرس', customer['address'].toString()),
+                          ],
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // وضعیت
+                        _buildInfoSection(
+                          'وضعیت',
+                          Icons.info_outline,
+                          [
+                            _buildInfoRow(
+                              'وضعیت',
+                              customer['statusText']?.toString() ?? 'نامشخص',
+                              valueColor: _getStatusColor(customer['statusText']),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -138,12 +271,16 @@ class _CustomerListPageState extends State<CustomerListPage> {
 
                 const SizedBox(height: 16),
 
-                // Close button
+                // دکمه بستن
                 SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton(
+                  child: ElevatedButton.icon(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('Close'),
+                    icon: const Icon(Icons.close),
+                    label: const Text('بستن'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.all(14),
+                    ),
                   ),
                 ),
               ],
@@ -152,6 +289,75 @@ class _CustomerListPageState extends State<CustomerListPage> {
         ),
       ),
     );
+  }
+  
+  Widget _buildInfoSection(String title, IconData icon, List<Widget> children) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: Colors.blue[700]),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue[700],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...children,
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildInfoRow(String label, String value, {Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                color: valueColor ?? Colors.black54,
+                fontWeight: valueColor != null ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Color _getStatusColor(String? status) {
+    if (status == null) return Colors.grey;
+    if (status.contains('Confirmed') || status.contains('تایید')) return Colors.green;
+    if (status.contains('Awaiting') || status.contains('انتظار')) return Colors.orange;
+    return Colors.grey;
   }
 
   @override

@@ -6,11 +6,11 @@ import 'package:flutter/foundation.dart';
 
 class ApiService {
   // API Configuration for different environments
-  // Note: Android emulators use 10.0.2.2 to connect to host machine's localhost
-  static const String _debugBaseUrl = 'https://10.0.2.2:7179/api';
-  static const String _debugImageUrl = 'https://10.0.2.2:7179';
-  static const String _releaseBaseUrl = 'https://10.0.2.2:7179/api';
-  static const String _releaseImageUrl = 'https://10.0.2.2:7179';
+  // Production API server
+  static const String _debugBaseUrl = 'https://api1.katawazexchange.com/api';
+  static const String _debugImageUrl = 'https://katawazexchange.com';
+  static const String _releaseBaseUrl = 'https://api1.katawazexchange.com/api';
+  static const String _releaseImageUrl = 'https://katawazexchange.com';
   
   // Get current base URL based on build mode
   static String get baseUrl {
@@ -20,6 +20,11 @@ class ApiService {
   // Get current image URL based on build mode  
   static String get baseImageUrl {
     return kDebugMode ? _debugImageUrl : _releaseImageUrl;
+  }
+  
+  // Helper method to get image URL
+  static String getImageUrl() {
+    return baseImageUrl;
   }
   
   // Get current environment info
@@ -411,8 +416,20 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = json.decode(responseBody);
-        print('postChatDetail success: $data');
-        return Map<String, dynamic>.from(data);
+        print('postChatDetail response: $data (type: ${data.runtimeType})');
+        
+        // API may return just 'true' or a Map with details
+        if (data is bool && data == true) {
+          // Success with no additional data - return empty map to indicate success
+          print('postChatDetail: Success (boolean true)');
+          return {};
+        } else if (data is Map) {
+          print('postChatDetail: Success with data');
+          return Map<String, dynamic>.from(data);
+        } else {
+          print('postChatDetail: Unexpected response format');
+          return {};
+        }
       } else if (response.statusCode == 401) {
         await handle401Unauthorized();
         print('Token expired while posting chat detail');
@@ -539,5 +556,375 @@ class ApiService {
     }
   }
 
+  /// Get select options for account forms (countries, provinces, zones, etc.)
+  static Future<Map<String, dynamic>?> getAccountSelectOptions() async {
+    try {
+      final token = await getAuthToken();
+      if (token == null || token.isEmpty) {
+        print('⚠️ No auth token available for getAccountSelectOptions');
+        return null;
+      }
+
+      print('📡 Fetching account select options from API...');
+      final response = await http.get(
+        Uri.parse('$baseUrl/account/GetSelectOptions'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('✅ Account select options fetched successfully');
+        print('📊 Response keys: ${data.keys.toList()}');
+        return data;
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('🚨 Token expired while getting account select options');
+        return null;
+      } else {
+        print('❌ Failed to get account select options: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      print('💥 Error getting account select options: $e');
+      return null;
+    }
+  }
+
+  /// Get select options for transfer cash forms (currencies, branches, etc.)
+  static Future<Map<String, dynamic>?> getTransferCashSelectOptions() async {
+    try {
+      final token = await getAuthToken();
+      if (token == null || token.isEmpty) {
+        print('⚠️ No auth token available for getTransferCashSelectOptions');
+        return null;
+      }
+
+      print('📡 Fetching transfer cash select options from API...');
+      final response = await http.get(
+        Uri.parse('$baseUrl/transfercash/GetSelectOptions'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('✅ Transfer cash select options fetched successfully');
+        print('📊 Response keys: ${data.keys.toList()}');
+        return data;
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('🚨 Token expired while getting transfer cash select options');
+        return null;
+      } else {
+        print('❌ Failed to get transfer cash select options: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      print('💥 Error getting transfer cash select options: $e');
+      return null;
+    }
+  }
+
+  /// Get list of countries
+  static Future<List<Map<String, dynamic>>> getCountries() async {
+    try {
+      final token = await getAuthToken();
+      if (token == null || token.isEmpty) {
+        print('⚠️ No auth token available for getCountries');
+        return [];
+      }
+
+      print('📡 Fetching countries from API...');
+      final response = await http.get(
+        Uri.parse('$baseUrl/CountryProvinceCity/getCountry'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('✅ Countries fetched successfully');
+        
+        // Handle different response formats
+        if (data is List) {
+          print('📊 Countries count: ${data.length}');
+          return List<Map<String, dynamic>>.from(data);
+        } else if (data is Map && data.containsKey('data')) {
+          print('📊 Countries count: ${(data['data'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['data']);
+        } else if (data is Map && data.containsKey('countries')) {
+          print('📊 Countries count: ${(data['countries'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['countries']);
+        } else {
+          print('⚠️ Unexpected response format for countries');
+          return [];
+        }
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('🚨 Token expired while getting countries');
+        return [];
+      } else {
+        print('❌ Failed to get countries: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return [];
+      }
+    } catch (e) {
+      print('💥 Error getting countries: $e');
+      return [];
+    }
+  }
+
+  /// Get list of provinces
+  static Future<List<Map<String, dynamic>>> getProvinces() async {
+    try {
+      final token = await getAuthToken();
+      if (token == null || token.isEmpty) {
+        print('⚠️ No auth token available for getProvinces');
+        return [];
+      }
+
+      print('📡 Fetching provinces from API...');
+      final response = await http.get(
+        Uri.parse('$baseUrl/CountryProvinceCity/getProvince'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('✅ Provinces fetched successfully');
+        
+        if (data is List) {
+          print('📊 Provinces count: ${data.length}');
+          return List<Map<String, dynamic>>.from(data);
+        } else if (data is Map && data.containsKey('data')) {
+          print('📊 Provinces count: ${(data['data'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['data']);
+        } else if (data is Map && data.containsKey('provinces')) {
+          print('📊 Provinces count: ${(data['provinces'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['provinces']);
+        } else {
+          print('⚠️ Unexpected response format for provinces');
+          return [];
+        }
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('🚨 Token expired while getting provinces');
+        return [];
+      } else {
+        print('❌ Failed to get provinces: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return [];
+      }
+    } catch (e) {
+      print('💥 Error getting provinces: $e');
+      return [];
+    }
+  }
+
+  /// Get list of zones
+  static Future<List<Map<String, dynamic>>> getZones() async {
+    try {
+      final token = await getAuthToken();
+      if (token == null || token.isEmpty) {
+        print('⚠️ No auth token available for getZones');
+        return [];
+      }
+
+      print('📡 Fetching zones from API...');
+      final response = await http.get(
+        Uri.parse('$baseUrl/CountryProvinceCity/getZone'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('✅ Zones fetched successfully');
+        
+        if (data is List) {
+          print('📊 Zones count: ${data.length}');
+          return List<Map<String, dynamic>>.from(data);
+        } else if (data is Map && data.containsKey('data')) {
+          print('📊 Zones count: ${(data['data'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['data']);
+        } else if (data is Map && data.containsKey('zones')) {
+          print('📊 Zones count: ${(data['zones'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['zones']);
+        } else {
+          print('⚠️ Unexpected response format for zones');
+          return [];
+        }
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('🚨 Token expired while getting zones');
+        return [];
+      } else {
+        print('❌ Failed to get zones: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return [];
+      }
+    } catch (e) {
+      print('💥 Error getting zones: $e');
+      return [];
+    }
+  }
+
+  /// Get list of cities
+  static Future<List<Map<String, dynamic>>> getCities() async {
+    try {
+      final token = await getAuthToken();
+      if (token == null || token.isEmpty) {
+        print('⚠️ No auth token available for getCities');
+        return [];
+      }
+
+      print('📡 Fetching cities from API...');
+      final response = await http.get(
+        Uri.parse('$baseUrl/CountryProvinceCity/getCity'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('✅ Cities fetched successfully');
+        
+        if (data is List) {
+          print('📊 Cities count: ${data.length}');
+          return List<Map<String, dynamic>>.from(data);
+        } else if (data is Map && data.containsKey('data')) {
+          print('📊 Cities count: ${(data['data'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['data']);
+        } else if (data is Map && data.containsKey('cities')) {
+          print('📊 Cities count: ${(data['cities'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['cities']);
+        } else {
+          print('⚠️ Unexpected response format for cities');
+          return [];
+        }
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('🚨 Token expired while getting cities');
+        return [];
+      } else {
+        print('❌ Failed to get cities: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return [];
+      }
+    } catch (e) {
+      print('💥 Error getting cities: $e');
+      return [];
+    }
+  }
+
+  /// Submit transfer cash data
+  static Future<Map<String, dynamic>?> postTransferCash(Map<String, dynamic> transferData) async {
+    try {
+      final token = await getAuthToken();
+      if (token == null || token.isEmpty) {
+        print('⚠️ No auth token available for postTransferCash');
+        return null;
+      }
+
+      print('📡 Posting transfer cash to API...');
+      print('📦 Transfer data: $transferData');
+      
+      final response = await http.post(
+        Uri.parse('$baseUrl/TransferCash/PostValue'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: json.encode(transferData),
+      );
+
+      print('📬 Response status: ${response.statusCode}');
+      print('📬 Response body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body);
+        print('✅ Transfer cash posted successfully');
+        return data;
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('🚨 Token expired while posting transfer cash');
+        return null;
+      } else {
+        print('❌ Failed to post transfer cash: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      print('💥 Error posting transfer cash: $e');
+      return null;
+    }
+  }
+
+  /// Get list of customers/accounts
+  static Future<List<Map<String, dynamic>>> getAccounts({int page = 1, int size = 100, String search = ''}) async {
+    try {
+      final token = await getAuthToken();
+      if (token == null || token.isEmpty) {
+        print('⚠️ No auth token available for getAccounts');
+        return [];
+      }
+
+      print('📡 Fetching accounts from API...');
+      final response = await http.post(
+        Uri.parse('$baseUrl/account/PostIncludeByPaging'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: json.encode({
+          'isFullPrint': true,
+          'page': page,
+          'size': size,
+          'status': 0,
+          'search': search,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('✅ Accounts fetched successfully');
+        
+        if (data is Map && data.containsKey('data')) {
+          print('📊 Accounts count: ${(data['data'] as List).length}');
+          return List<Map<String, dynamic>>.from(data['data']);
+        } else {
+          print('⚠️ Unexpected response format for accounts');
+          return [];
+        }
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        print('🚨 Token expired while getting accounts');
+        return [];
+      } else {
+        print('❌ Failed to get accounts: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return [];
+      }
+    } catch (e) {
+      print('💥 Error getting accounts: $e');
+      return [];
+    }
+  }
 
 }

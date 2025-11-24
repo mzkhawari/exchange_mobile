@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'services/api_service.dart';
 import 'services/voice_recorder_service.dart';
+import 'services/file_cache_service.dart';
 
 class ChatroomPage extends StatefulWidget {
   const ChatroomPage({super.key});
@@ -231,14 +232,21 @@ class _ChatroomPageState extends State<ChatroomPage> {
             print('🔍 Updated _chatMasterId from getChatDetails: $_chatMasterId');
           }
           
-          if (messages.isNotEmpty) {
-            setState(() {
+          setState(() {
+            // Clear previous messages before loading new chat
+            _messages.clear();
+            
+            if (messages.isNotEmpty) {
+              // Debug: print raw first message to see structure
+              print('🔍 Raw first message: ${messages.first}');
+              print('🔍 Message type: ${messages.first.runtimeType}');
+              
               _messages.addAll(messages.map((msg) {
                 // Parse new API format with proper type conversion
                 final messageId = int.tryParse((msg['Id'] ?? msg['id'] ?? 0).toString()) ?? 0;
                 final messageValue = (msg['Value'] ?? msg['value'] ?? '').toString();
-                final fileUrl = msg['FileUrl']?.toString();
-                final fileUrlThumb = msg['FileUrlThumb']?.toString();
+                final fileUrl = (msg['FileUrl'] ?? msg['fileUrl'])?.toString();
+                final fileUrlThumb = (msg['FileUrlThumb'] ?? msg['fileUrlThumb'])?.toString();
                 final dateString = (msg['Date'] ?? msg['date'] ?? '').toString();
                 final messageDate = DateTime.tryParse(dateString) ?? DateTime.now();
                 final senderId = int.tryParse((msg['UserId'] ?? msg['userId'] ?? 0).toString()) ?? 0;
@@ -246,26 +254,52 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 final messageStatus = (msg['Status'] ?? msg['status'] ?? 'None').toString();
                 final isMine = (msg['IsMine'] ?? msg['isMine'] ?? false) == true;
                 
+                print('🔍 Parsing message: id=$messageId, value=$messageValue, fileUrl=$fileUrl');
+                
                 // Determine message type based on file URL
                 MessageType msgType = MessageType.text;
-                if (fileUrl != null) {
-                  if (fileUrl.toString().toLowerCase().contains('.mp3') || 
-                      fileUrl.toString().toLowerCase().contains('.wav') ||
-                      fileUrl.toString().toLowerCase().contains('.m4a')) {
+                String? fullFileUrl = fileUrl;
+                
+                if (fileUrl != null && fileUrl.isNotEmpty) {
+                  // Construct full URL if fileUrl is relative path
+                  if (!fileUrl.startsWith('http')) {
+                    final imageUrl = ApiService.getImageUrl();
+                    fullFileUrl = '$imageUrl/$fileUrl';
+                  }
+                  
+                  // Determine message type based on file extension
+                  final lowerUrl = fileUrl.toLowerCase();
+                  print('🔍 Checking file URL: $lowerUrl');
+                  
+                  if (lowerUrl.contains('.mp3') || 
+                      lowerUrl.contains('.wav') ||
+                      lowerUrl.contains('.m4a') ||
+                      lowerUrl.contains('.aac') ||  // Added .aac support
+                      lowerUrl.contains('.ogg')) {
                     msgType = MessageType.voice;
-                  } else if (fileUrl.toString().toLowerCase().contains('.jpg') ||
-                           fileUrl.toString().toLowerCase().contains('.png') ||
-                           fileUrl.toString().toLowerCase().contains('.jpeg')) {
+                    print('✅ Detected as VOICE');
+                  } else if (lowerUrl.contains('.jpg') ||
+                           lowerUrl.contains('.png') ||
+                           lowerUrl.contains('.jpeg') ||
+                           lowerUrl.contains('.gif') ||
+                           lowerUrl.contains('.webp')) {
                     msgType = MessageType.image;
+                    print('✅ Detected as IMAGE');
                   } else {
                     msgType = MessageType.file;
+                    print('✅ Detected as FILE');
                   }
+                }
+                
+                // Debug print
+                if (msgType == MessageType.voice) {
+                  print('📢 Voice message detected: value=$messageValue, fileUrl=$fullFileUrl, msgType=$msgType');
                 }
                 
                 return ChatMessage(
                   id: messageId,
                   value: messageValue,
-                  fileUrl: fileUrl,
+                  fileUrl: fullFileUrl,  // Use full URL instead of relative path
                   fileUrlThumb: fileUrlThumb,
                   date: messageDate,
                   userId: senderId,
@@ -275,9 +309,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                   sender: isMine ? _currentUserName : (_selectedUser?['firstName'] ?? 'Unknown'),
                   messageType: msgType,
                 );
-              }));
-            });
-          }
+              }).toList());
+            }
+          });
         }
       } catch (e) {
         print('Error loading chat messages: $e');
@@ -372,8 +406,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
     if (_messageController.text.trim().isEmpty) return;
 
     final messageText = _messageController.text.trim();
+    final tempId = DateTime.now().millisecondsSinceEpoch;
     final message = ChatMessage(
-      id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
+      id: tempId, // Temporary ID
       value: messageText,
       date: DateTime.now(),
       userId: _userInfo?['id'] ?? 0,
@@ -408,8 +443,26 @@ class _ChatroomPageState extends State<ChatroomPage> {
             ),
           );
         } else {
-          // Mark message as delivered
-          if (result['id'] != null) {
+          // API returned success - update message status to show check mark
+          setState(() {
+            final index = _messages.indexWhere((m) => m.id == tempId);
+            if (index != -1) {
+              _messages[index] = ChatMessage(
+                id: result.containsKey('id') ? result['id'] : tempId,
+                value: _messages[index].value,
+                date: _messages[index].date,
+                userId: _messages[index].userId,
+                isSent: true, // Show check mark
+                status: 'Delivered',
+                isMine: _messages[index].isMine,
+                sender: _messages[index].sender,
+                messageType: _messages[index].messageType,
+              );
+            }
+          });
+          
+          // Mark message as delivered if ID is available
+          if (result.containsKey('id') && result['id'] != null) {
             await ApiService.updateChatDetailStatus(
               chatDetailIds: [result['id']],
               status: 'Delivered',
@@ -489,12 +542,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
       final duration = await _voiceRecorder.getAudioDuration(recordingPath);
       
       // Create voice message
+      final tempId = DateTime.now().millisecondsSinceEpoch;
       final voiceMessage = ChatMessage(
-        id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
+        id: tempId,
         value: 'Voice message',
         date: DateTime.now(),
         userId: _userInfo?['id'] ?? 0,
-        isSent: false, // Will be updated after API call
+        isSent: false,
         status: 'None',
         isMine: true,
         fileUrl: recordingPath,
@@ -525,8 +579,28 @@ class _ChatroomPageState extends State<ChatroomPage> {
           );
           
           if (result != null) {
+            // API returned success - update message status to show check mark
+            setState(() {
+              final index = _messages.indexWhere((m) => m.id == tempId);
+              if (index != -1) {
+                _messages[index] = ChatMessage(
+                  id: result.containsKey('id') ? result['id'] : tempId,
+                  value: _messages[index].value,
+                  date: _messages[index].date,
+                  userId: _messages[index].userId,
+                  isSent: true, // Show check mark
+                  status: 'Delivered',
+                  isMine: _messages[index].isMine,
+                  fileUrl: _messages[index].fileUrl,
+                  sender: _messages[index].sender,
+                  messageType: _messages[index].messageType,
+                  duration: _messages[index].duration,
+                );
+              }
+            });
+            
             // Mark voice message as delivered
-            if (result['id'] != null) {
+            if (result.containsKey('id') && result['id'] != null) {
               await ApiService.updateChatDetailStatus(
                 chatDetailIds: [result['id']],
                 status: 'Delivered',
@@ -598,8 +672,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
       );
       
       if (photo != null) {
+        final tempId = DateTime.now().millisecondsSinceEpoch;
         final imageMessage = ChatMessage(
-          id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
+          id: tempId, // Temporary ID
           value: 'Photo',
           date: DateTime.now(),
           userId: _userInfo?['id'] ?? 0,
@@ -634,8 +709,27 @@ class _ChatroomPageState extends State<ChatroomPage> {
             );
             
             if (result != null) {
+              // API returned success - update message status to show check mark
+              setState(() {
+                final index = _messages.indexWhere((m) => m.id == tempId);
+                if (index != -1) {
+                  _messages[index] = ChatMessage(
+                    id: result.containsKey('id') ? result['id'] : tempId,
+                    value: _messages[index].value,
+                    date: _messages[index].date,
+                    userId: _messages[index].userId,
+                    isSent: true, // Show check mark
+                    status: 'Delivered',
+                    isMine: _messages[index].isMine,
+                    fileUrl: _messages[index].fileUrl,
+                    sender: _messages[index].sender,
+                    messageType: _messages[index].messageType,
+                  );
+                }
+              });
+              
               // Mark image message as delivered
-              if (result['id'] != null) {
+              if (result.containsKey('id') && result['id'] != null) {
                 await ApiService.updateChatDetailStatus(
                   chatDetailIds: [result['id']],
                   status: 'Delivered',
@@ -1052,7 +1146,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     return InkWell(
       onTap: () => _selectUser(user),
       child: Container(
-        color: isSelected ? const Color(0xFFE8F5E8) : Colors.transparent,
+        color: isSelected ? Colors.blue[50] : Colors.transparent,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
           children: [
@@ -1065,7 +1159,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                       child: Container(
                         width: 50,
                         height: 50,
-                        color: const Color(0xFF075E54),
+                        color: Theme.of(context).primaryColor,
                         child: avatarUrl.isNotEmpty 
                           ? Image.network(
                               ApiService.getFullAvatarUrl(avatarUrl),
@@ -1201,11 +1295,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
       child: Container(
         decoration: BoxDecoration(
           border: Border.all(
-            color: isSelected ? const Color(0xFF075E54) : Colors.grey.shade300,
+            color: isSelected ? Theme.of(context).primaryColor : Colors.grey.shade300,
             width: isSelected ? 3 : 1,
           ),
           borderRadius: BorderRadius.circular(8),
-          color: isSelected ? const Color(0xFFE8F5E8) : Colors.white,
+          color: isSelected ? Colors.blue[50] : Colors.white,
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1217,7 +1311,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                   radius: 30,
                   backgroundColor: Colors.grey[400],
                   backgroundImage: avatarUrl.isNotEmpty 
-                    ? NetworkImage(avatarUrl) 
+                    ? NetworkImage(ApiService.getFullAvatarUrl(avatarUrl)) 
                     : null,
                   child: avatarUrl.isEmpty 
                     ? Text(
@@ -1265,7 +1359,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
             border: Border.all(
-              color: isSelected ? const Color(0xFF075E54) : Colors.transparent,
+              color: isSelected ? Theme.of(context).primaryColor : Colors.transparent,
               width: 2,
             ),
             borderRadius: BorderRadius.circular(30),
@@ -1425,13 +1519,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 radius: 20,
                 backgroundColor: Colors.white,
                 backgroundImage: avatarUrl.isNotEmpty 
-                  ? NetworkImage(avatarUrl) 
+                  ? NetworkImage(ApiService.getFullAvatarUrl(avatarUrl)) 
                   : null,
                 child: avatarUrl.isEmpty 
                   ? Text(
                       fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                        color: Color(0xFF075E54),
+                      style: TextStyle(
+                        color: Theme.of(context).primaryColor,
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
                       ),
@@ -1542,7 +1636,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 Text(
                   _userInfo != null ? 'Welcome $_currentUserName' : 'Online now',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.8),
+                    color: Colors.grey[600],
                     fontSize: 13,
                   ),
                 ),
@@ -1553,11 +1647,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
       ),
       actions: [
         IconButton(
-          icon: const Icon(Icons.videocam, color: Colors.white),
+          icon: const Icon(Icons.videocam),
           onPressed: () {},
         ),
         IconButton(
-          icon: const Icon(Icons.call, color: Colors.white),
+          icon: const Icon(Icons.call),
           onPressed: () {},
         ),
         PopupMenuButton<String>(
@@ -1696,7 +1790,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
               ),
               decoration: BoxDecoration(
                 color: message.isMe 
-                    ? const Color(0xFFDCF8C6) // WhatsApp light green
+                    ? Colors.blue[100]! // WhatsApp light green
                     : Colors.white,
                 borderRadius: BorderRadius.only(
                   topLeft: const Radius.circular(12),
@@ -1796,39 +1890,32 @@ class _ChatroomPageState extends State<ChatroomPage> {
     }
     
     // Message sent successfully, show status based on Status field
-    switch (message.status.toLowerCase()) {
-      case 'seen':
-        return Icon(
-          Icons.done_all,
-          size: 16,
-          color: Colors.blue[700], // Blue for seen/read
-        );
-      case 'delivered':
-        return Icon(
-          Icons.done_all,
-          size: 16,
-          color: Colors.grey[600], // Grey for delivered but not read
-        );
-      case 'listen': // For voice messages
-        return Icon(
-          Icons.headset,
-          size: 14,
-          color: Colors.blue[700],
-        );
-      case 'watch': // For images/videos
-        return Icon(
-          Icons.visibility,
-          size: 14,
-          color: Colors.blue[700],
-        );
-      case 'none':
-      default:
-        return Icon(
-          Icons.done,
-          size: 16,
-          color: Colors.grey[600], // Single check for sent
-        );
+    final statusLower = message.status.toLowerCase();
+    
+    // For seen/read messages - Blue double check
+    if (statusLower == 'seen' || statusLower == 'listen' || statusLower == 'watch') {
+      return Icon(
+        Icons.done_all,
+        size: 16,
+        color: Colors.blue[700], // ✓✓ آبی - دیده شده
+      );
     }
+    
+    // For delivered messages - Grey double check
+    if (statusLower == 'delivered') {
+      return Icon(
+        Icons.done_all,
+        size: 16,
+        color: Colors.grey[600], // ✓✓ خاکستری - دریافت شده
+      );
+    }
+    
+    // For sent but not delivered - Single grey check
+    return Icon(
+      Icons.done,
+      size: 16,
+      color: Colors.grey[600], // ✓ تک - ارسال شده
+    );
   }
 
   Widget _buildVoiceMessageWidget(ChatMessage message) {
@@ -1921,29 +2008,65 @@ class _ChatroomPageState extends State<ChatroomPage> {
             },
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: message.filePath != null
-                  ? Image.file(
-                      File(message.filePath!),
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        height: 150,
-                        width: double.infinity,
-                        color: Colors.grey[200],
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.broken_image, size: 50, color: Colors.grey[400]),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Image not found',
-                              style: TextStyle(color: Colors.grey[600]),
+              child: message.fileUrl != null
+                  ? FutureBuilder<File>(
+                      future: _getCachedImage(message.fileUrl!),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          // Show loading indicator while downloading/caching
+                          return Container(
+                            height: 150,
+                            width: double.infinity,
+                            color: Colors.grey[200],
+                            child: const Center(
+                              child: CircularProgressIndicator(),
                             ),
-                          ],
-                        ),
-                      );
-                    },
-                  )
+                          );
+                        } else if (snapshot.hasError || !snapshot.hasData) {
+                          // Show error state if download failed
+                          return Container(
+                            height: 150,
+                            width: double.infinity,
+                            color: Colors.grey[200],
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.broken_image, size: 50, color: Colors.grey[400]),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Image not available',
+                                  style: TextStyle(color: Colors.grey[600]),
+                                ),
+                              ],
+                            ),
+                          );
+                        } else {
+                          // Display cached image file
+                          return Image.file(
+                            snapshot.data!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                height: 150,
+                                width: double.infinity,
+                                color: Colors.grey[200],
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.broken_image, size: 50, color: Colors.grey[400]),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Image error',
+                                      style: TextStyle(color: Colors.grey[600]),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          );
+                        }
+                      },
+                    )
                 : Container(
                     height: 150,
                     width: double.infinity,
@@ -1963,6 +2086,18 @@ class _ChatroomPageState extends State<ChatroomPage> {
         ],
       ),
     );
+  }
+
+  // Helper method to get cached image with authentication
+  Future<File> _getCachedImage(String imageUrl) async {
+    final token = await ApiService.getAuthToken();
+    final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
+    
+    final filePath = await FileCacheService.getFile(imageUrl, headers: headers);
+    if (filePath == null) {
+      throw Exception('Failed to download image');
+    }
+    return File(filePath);
   }
 
   Widget _buildFileMessageWidget(ChatMessage message) {
@@ -2023,14 +2158,21 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 
   void _toggleVoicePlayback(ChatMessage message) async {
-    if (message.filePath == null) return;
+    print('🎵 _toggleVoicePlayback called: fileUrl=${message.fileUrl}');
+    
+    if (message.fileUrl == null) return;
     
     final isCurrentlyPlaying = message.isPlaying ?? false;
     
     if (isCurrentlyPlaying) {
       await _voiceRecorder.pauseVoiceMessage();
     } else {
-      await _voiceRecorder.playVoiceMessage(message.filePath!);
+      // Get authentication token for API downloads
+      final token = await ApiService.getAuthToken();
+      final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
+      
+      // Play voice message from URL (will be cached automatically)
+      await _voiceRecorder.playVoiceMessageFromUrl(message.fileUrl!, headers: headers);
       
       // Mark voice message as listened when played (only if it's not from current user)
       if (!message.isMe && message.messageId != null) {

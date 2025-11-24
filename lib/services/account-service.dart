@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = 'https://10.0.2.2:7179/api';
+  static const String baseUrl = 'https://api1.katawazexchange.com/api';
 
   static Future<Map<String, dynamic>> postAccountAttachment({
     required int accountId,

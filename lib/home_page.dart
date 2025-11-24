@@ -1,13 +1,44 @@
 import 'package:flutter/material.dart';
-import 'account-form.dart'; // ✅ اینو اضافه کن
-import 'customer-list-page.dart'; // ✅ اینو اضافه کن
-import 'transfer-cash.dart'; // ✅ اینو اضافه کن
-import 'chatroom_page.dart'; // ✅ اضافه کردن صفحه چت
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'account-form.dart';
+import 'customer-list-page.dart';
+import 'transfer-cash.dart';
+import 'chatroom_page.dart';
+import 'settings_page.dart';
+import 'add_transfer_page.dart';
 import 'services/api_service.dart';
 import 'flutter_login_page.dart';
 
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  String _branchTitle = 'Katawaz Exchange';
+  String _userName = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userDataString = prefs.getString('user_data');
+    
+    if (userDataString != null) {
+      final userData = jsonDecode(userDataString);
+      setState(() {
+        _branchTitle = userData['branchTitle'] ?? 'Katawaz Exchange';
+        _userName = userData['firstName'] ?? '';
+      });
+    }
+  }
 
   void _listCustomers(BuildContext context) {
     // TODO: اینجا تابع نمایش لیست مشتریان
@@ -36,8 +67,11 @@ class HomePage extends StatelessWidget {
   );
   }
 
-  void _addTransaction() {
-    debugPrint('Add Transaction pressed');
+  void _addTransaction(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const AddTransferPage()),
+    );
   }
 
   void _currentShift() {
@@ -48,6 +82,13 @@ class HomePage extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const ChatroomPage()),
+    );
+  }
+
+  void _openSettings(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const SettingsPage()),
     );
   }
 
@@ -84,7 +125,7 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Katawaz Exchange - Home'),
+        title: Text(_branchTitle),
         centerTitle: true,
         actions: [
           IconButton(
@@ -104,9 +145,10 @@ class HomePage extends StatelessWidget {
             _buildButton(Icons.people, 'List Customers', () => _listCustomers(context)),
             _buildButton(Icons.person_add, 'Add Customer', () => _addCustomer(context)),
             _buildButton(Icons.list_alt, 'List Transactions', ()=>  _listTransactions(context)),
-            _buildButton(Icons.add_circle, 'Add Transaction', _addTransaction),
+            _buildButton(Icons.add_circle, 'Add Transfer', () => _addTransaction(context)),
             _buildButton(Icons.timer, 'Current Shift', _currentShift),
             _buildButton(Icons.chat, 'Chat Room', () => _openChatroom(context)),
+            _buildButton(Icons.settings, 'Settings', () => _openSettings(context)),
           ],
         ),
       ),

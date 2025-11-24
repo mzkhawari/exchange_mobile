@@ -3,6 +3,7 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'file_cache_service.dart';
 
 class VoiceRecorderService {
   static final VoiceRecorderService _instance = VoiceRecorderService._internal();
@@ -137,6 +138,45 @@ class VoiceRecorderService {
     } catch (e) {
       print('Error playing voice message: $e');
       _isPlaying = false;
+      return false;
+    }
+  }
+
+  // Play voice message from URL (with caching)
+  Future<bool> playVoiceMessageFromUrl(
+    String url, {
+    Map<String, String>? headers,
+  }) async {
+    try {
+      print('🎵 Playing voice from URL: $url');
+      
+      // Check if it's a local file path (starts with /)
+      if (url.startsWith('/')) {
+        print('✅ Local file detected, playing directly');
+        final file = File(url);
+        if (await file.exists()) {
+          return await playVoiceMessage(url);
+        } else {
+          print('❌ Local file not found: $url');
+          return false;
+        }
+      }
+      
+      // Get file from cache or download from server
+      final filePath = await FileCacheService.getFile(
+        url,
+        headers: headers,
+      );
+      
+      if (filePath == null) {
+        print('❌ Failed to get audio file');
+        return false;
+      }
+      
+      // Play the cached file
+      return await playVoiceMessage(filePath);
+    } catch (e) {
+      print('Error playing voice from URL: $e');
       return false;
     }
   }

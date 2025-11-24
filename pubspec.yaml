@@ -22,6 +22,7 @@ dependencies:
   just_audio: ^0.9.36
   path_provider: ^2.1.1
   permission_handler: ^11.0.1
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:
