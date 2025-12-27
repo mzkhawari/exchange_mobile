@@ -133,121 +133,436 @@ class _TransactionListPageState extends State<TransactionListPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('List of Financial Transactions'),
-        centerTitle: true,
-        backgroundColor: Colors.blue.shade700,
-        foregroundColor: Colors.white,
-      ),
-      body: Column(
-        children: [
-          _buildStatusButtons(),
-          Expanded(
-            child: isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _buildTransactionList(),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.green.shade50,
+              Colors.teal.shade50,
+              Colors.blue.shade50,
+            ],
           ),
-          _buildPagination(),
-        ],
-      ),
-    );
-  }
-
-  /// 🎛️ دکمه‌های فیلتر وضعیت
-  Widget _buildStatusButtons() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.all(8),
-      child: Row(
-        children: [
-          _statusButton('All', 0, Colors.grey.shade300),
-          _statusButton('Awaiting Approval', 1, Colors.yellow.shade100),
-          _statusButton('Confirmed', 2, Colors.purple.shade200),
-          _statusButton('Completed', 4, Colors.green.shade100),
-          _statusButton('Rejected', 5, Colors.red.shade100),
-          _statusButton('Rejected w/o Commission', 55, Colors.red.shade200),
-        ],
-      ),
-    );
-  }
-
-  Widget _statusButton(String text, int value, Color color) {
-    final isActive = selectedStatus == value;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: color,
-          foregroundColor: isActive ? Colors.blue.shade900 : Colors.black87,
-          elevation: isActive ? 3 : 0,
         ),
-        onPressed: () => statusButton(value),
-        child: Text(text),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Header with gradient
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.green.shade700, Colors.teal.shade600],
+                  ),
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(30),
+                    bottomRight: Radius.circular(30),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.green.withOpacity(0.3),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    const Expanded(
+                      child: Text(
+                        '💸 Transaction List',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh, color: Colors.white),
+                      onPressed: () => fetchTransactions(),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 10),
+
+              // Status filter section
+              _buildStatusButtons(),
+
+              const SizedBox(height: 10),
+
+              // Stats bar
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 15),
+                padding: const EdgeInsets.all(15),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildStatItem(Icons.receipt_long, 'Total', dataListCount.toString(), Colors.green),
+                    _buildStatItem(Icons.layers, 'Page', currentPage.toString(), Colors.teal),
+                    _buildStatItem(Icons.dataset, 'Showing', dataList.length.toString(), Colors.blue),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 15),
+
+              // Transaction list
+              Expanded(
+                child: isLoading
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(color: Colors.green.shade700),
+                            const SizedBox(height: 15),
+                            Text(
+                              'Loading transactions...',
+                              style: TextStyle(color: Colors.green.shade700, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      )
+                    : _buildTransactionList(),
+              ),
+
+              // Pagination
+              _buildPagination(),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  /// 🧾 لیست تراکنش‌ها
+  /// 🎛️ Status filter buttons
+  Widget _buildStatusButtons() {
+    return Container(
+      height: 110,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: GridView.count(
+        crossAxisCount: 3,
+        childAspectRatio: 2.5,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        children: [
+          _statusChip('All', 0, Icons.list, Colors.grey),
+          _statusChip('Awaiting', 1, Icons.pending_actions, Colors.orange),
+          _statusChip('Confirmed', 2, Icons.check_circle, Colors.purple),
+          _statusChip('Completed', 4, Icons.done_all, Colors.green),
+          _statusChip('Rejected', 5, Icons.cancel, Colors.red),
+          _statusChip('Rejected w/o C', 55, Icons.block, Colors.red.shade700),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusChip(String label, int value, IconData icon, Color color) {
+    final isSelected = selectedStatus == value;
+    return GestureDetector(
+      onTap: () => statusButton(value),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: isSelected
+              ? LinearGradient(colors: [color, color.withOpacity(0.7)])
+              : null,
+          color: isSelected ? null : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? color : Colors.grey.shade300,
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: color.withOpacity(0.4),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : [],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 20,
+              color: isSelected ? Colors.white : color,
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                color: isSelected ? Colors.white : Colors.black87,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatItem(IconData icon, String label, String value, Color color) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 28),
+        const SizedBox(height: 5),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey.shade600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 🧾 Transaction list
   Widget _buildTransactionList() {
     if (dataList.isEmpty) {
-      return const Center(child: Text("No transactions found."));
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.receipt_long, size: 80, color: Colors.grey.shade400),
+            const SizedBox(height: 15),
+            Text(
+              'No transactions found',
+              style: TextStyle(fontSize: 18, color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+      );
     }
 
     return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 15),
       itemCount: dataList.length,
       itemBuilder: (context, index) {
         final item = dataList[index];
-        return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          elevation: 2,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: Colors.blue.shade100,
-              child: Text('${item.id}'),
-            ),
-            title: Text(
-              'Amount: ${item.amount?.toStringAsFixed(2) ?? "-"}',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            subtitle: Text(
-              'Date: ${item.createDateFa ?? "-"}  |  Afg: ${item.amountAfg?.toStringAsFixed(2) ?? "-"}',
-            ),
-            trailing: Text(
-              'Rate: ${item.buySellRate ?? "-"}',
-              style: const TextStyle(color: Colors.blueAccent),
-            ),
-          ),
-        );
+        return _buildTransactionCard(item);
       },
     );
   }
 
-  /// 📄 صفحه‌بندی
+  Widget _buildTransactionCard(TransactionModel item) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Row(
+          children: [
+            // ID Badge
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.green.shade400, Colors.teal.shade400],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.green.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Center(
+                child: Text(
+                  '${item.id}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 15),
+
+            // Transaction details
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.attach_money, size: 16, color: Colors.green.shade700),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Amount: ${item.amount?.toStringAsFixed(2) ?? "-"}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: Colors.green.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      Icon(Icons.calendar_today, size: 14, color: Colors.grey.shade600),
+                      const SizedBox(width: 5),
+                      Text(
+                        item.createDateFa ?? "N/A",
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Icon(Icons.currency_exchange, size: 14, color: Colors.grey.shade600),
+                      const SizedBox(width: 5),
+                      Text(
+                        'AFG: ${item.amountAfg?.toStringAsFixed(2) ?? "-"}',
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // Rate badge
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.blue.shade400, Colors.purple.shade400],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.blue.withOpacity(0.3),
+                    blurRadius: 5,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'Rate',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    item.buySellRate?.toStringAsFixed(2) ?? "-",
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 📄 Pagination
   Widget _buildPagination() {
     final totalPages = (dataListCount / 10).ceil();
     if (totalPages <= 1) return const SizedBox.shrink();
 
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          ElevatedButton(
-            onPressed: currentPage > 1
-                ? () => fetchTransactions(page: currentPage - 1)
-                : null,
-            child: const Text('Previous'),
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, -5),
           ),
-          const SizedBox(width: 12),
-          Text('Page $currentPage of $totalPages'),
-          const SizedBox(width: 12),
-          ElevatedButton(
-            onPressed: currentPage < totalPages
-                ? () => fetchTransactions(page: currentPage + 1)
-                : null,
-            child: const Text('Next'),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            onPressed: currentPage > 1 ? () => fetchTransactions(page: currentPage - 1) : null,
+            icon: Icon(
+              Icons.arrow_back_ios,
+              color: currentPage > 1 ? Colors.green.shade700 : Colors.grey,
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.green.shade600, Colors.teal.shade500],
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'Page $currentPage of $totalPages',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: currentPage < totalPages ? () => fetchTransactions(page: currentPage + 1) : null,
+            icon: Icon(
+              Icons.arrow_forward_ios,
+              color: currentPage < totalPages ? Colors.green.shade700 : Colors.grey,
+            ),
           ),
         ],
       ),

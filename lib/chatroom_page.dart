@@ -7,7 +7,10 @@ import 'services/voice_recorder_service.dart';
 import 'services/file_cache_service.dart';
 
 class ChatroomPage extends StatefulWidget {
-  const ChatroomPage({super.key});
+  final Map<String, dynamic>? initialUser;
+  final bool standalone;
+
+  const ChatroomPage({super.key, this.initialUser, this.standalone = false});
 
   @override
   State<ChatroomPage> createState() => _ChatroomPageState();
@@ -34,6 +37,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
   final VoiceRecorderService _voiceRecorder = VoiceRecorderService();
   bool _isRecording = false;
   bool _isHoldingMic = false;
+  bool _isRecordingLocked = false; // حالت قفل شده (کشیدن به بالا)
+  double _micDragOffset = 0.0; // فاصله کشیدن میکروفن
+  String? _recordedVoicePath; // مسیر فایل ضبط شده برای حالت قفل
+  Duration _recordingDuration = Duration.zero; // مدت زمان ضبط
+  List<double> _waveformData = []; // داده‌های نمودار صوتی
   
   // Image picker
   final ImagePicker _picker = ImagePicker();
@@ -46,6 +54,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
     ApiService.logCurrentConfig();
     
     _initializeChat();
+    
+    // If standalone mode with initialUser, set immediately
+    if (widget.initialUser != null) {
+      _selectedUser = widget.initialUser;
+      _chatMasterId = widget.initialUser!['id'] as int?;
+    }
+    
     _loadUserData().then((_) {
       // Always load available users, regardless of authentication status
       _loadAvailableUsers();
@@ -437,9 +452,16 @@ class _ChatroomPageState extends State<ChatroomPage> {
         if (result == null) {
           // Show error if message failed to send
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to send message. Please try again.'),
+            SnackBar(
+              content: const Text('Failed to send message. Please try again.', textAlign: TextAlign.center),
               backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              margin: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 10,
+                left: 20,
+                right: 20,
+              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
           );
         } else {
@@ -473,191 +495,181 @@ class _ChatroomPageState extends State<ChatroomPage> {
         print('Error sending message: $e');
         // Show error message
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Message sent in offline mode. Login to sync with server.'),
+          SnackBar(
+            content: const Text('Message sent in offline mode. Login to sync with server.', textAlign: TextAlign.center),
             backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 10,
+              left: 20,
+              right: 20,
+            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
     } else {
       // Guest mode - show info message
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Message sent in guest mode. Login to sync with server.'),
+        SnackBar(
+          content: const Text('Message sent in guest mode. Login to sync with server.', textAlign: TextAlign.center),
           backgroundColor: Colors.blue,
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            top: MediaQuery.of(context).padding.top + 10,
+            left: 20,
+            right: 20,
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     }
   }
 
   // Voice recording methods
-  void _startRecording() async {
-    final hasPermission = await _voiceRecorder.checkPermissions();
-    if (!hasPermission) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Microphone permission is required for voice messages'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    final success = await _voiceRecorder.startRecording();
-    if (success) {
-      setState(() {
-        _isRecording = true;
-      });
-      
-      // Show recording UI feedback
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              Icon(Icons.fiber_manual_record, color: Colors.red),
-              SizedBox(width: 8),
-              Text('Recording voice message...'),
-            ],
-          ),
-          duration: Duration(seconds: 60), // Long duration for recording
-          backgroundColor: Colors.black87,
-        ),
-      );
-    }
-  }
-
-  void _stopRecording() async {
-    if (!_isRecording) return;
+  // Send voice message to API
+  Future<void> _sendVoiceMessage(String recordingPath) async {
+    // Get audio duration
+    final duration = await _voiceRecorder.getAudioDuration(recordingPath);
     
-    final recordingPath = await _voiceRecorder.stopRecording();
+    // Create voice message
+    final tempId = DateTime.now().millisecondsSinceEpoch;
+    final voiceMessage = ChatMessage(
+      id: tempId,
+      value: 'Voice message',
+      date: DateTime.now(),
+      userId: _userInfo?['id'] ?? 0,
+      isSent: false,
+      status: 'None',
+      isMine: true,
+      fileUrl: recordingPath,
+      sender: _currentUserName,
+      messageType: MessageType.voice,
+      duration: duration,
+    );
+
     setState(() {
-      _isRecording = false;
+      _messages.add(voiceMessage);
     });
     
-    // Hide recording feedback
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    _scrollToBottom();
     
-    if (recordingPath != null) {
-      // Get audio duration
-      final duration = await _voiceRecorder.getAudioDuration(recordingPath);
-      
-      // Create voice message
-      final tempId = DateTime.now().millisecondsSinceEpoch;
-      final voiceMessage = ChatMessage(
-        id: tempId,
-        value: 'Voice message',
-        date: DateTime.now(),
-        userId: _userInfo?['id'] ?? 0,
-        isSent: false,
-        status: 'None',
-        isMine: true,
-        fileUrl: recordingPath,
-        sender: _currentUserName,
-        messageType: MessageType.voice,
-        duration: duration,
-      );
-
-      setState(() {
-        _messages.add(voiceMessage);
-      });
-      
-      _scrollToBottom();
-      
-      // Send voice message to API if authenticated and chatMasterId available
-      if (_userInfo != null && _chatMasterId != null && _selectedUser != null) {
-        try {
-          print('🎤 DEBUG: Sending voice message...');
-          print('🎤 DEBUG: Recording path: $recordingPath');
-          print('🎤 DEBUG: File exists: ${await File(recordingPath).exists()}');
-          print('🎤 DEBUG: File size: ${await File(recordingPath).length()} bytes');
-          print('🎤 DEBUG: ChatMasterId: $_chatMasterId');
-          
-          final result = await ApiService.postChatDetail(
-            chatMasterId: _chatMasterId!,
-            value: 'Voice message', // API requires value field
-            voiceFilePath: recordingPath,
-          );
-          
-          if (result != null) {
-            // API returned success - update message status to show check mark
-            setState(() {
-              final index = _messages.indexWhere((m) => m.id == tempId);
-              if (index != -1) {
-                _messages[index] = ChatMessage(
-                  id: result.containsKey('id') ? result['id'] : tempId,
-                  value: _messages[index].value,
-                  date: _messages[index].date,
-                  userId: _messages[index].userId,
-                  isSent: true, // Show check mark
-                  status: 'Delivered',
-                  isMine: _messages[index].isMine,
-                  fileUrl: _messages[index].fileUrl,
-                  sender: _messages[index].sender,
-                  messageType: _messages[index].messageType,
-                  duration: _messages[index].duration,
-                );
-              }
-            });
-            
-            // Mark voice message as delivered
-            if (result.containsKey('id') && result['id'] != null) {
-              await ApiService.updateChatDetailStatus(
-                chatDetailIds: [result['id']],
+    // Send voice message to API if authenticated and chatMasterId available
+    if (_userInfo != null && _chatMasterId != null && _selectedUser != null) {
+      try {
+        print('🎤 DEBUG: Sending voice message...');
+        print('🎤 DEBUG: Recording path: $recordingPath');
+        print('🎤 DEBUG: File exists: ${await File(recordingPath).exists()}');
+        print('🎤 DEBUG: File size: ${await File(recordingPath).length()} bytes');
+        print('🎤 DEBUG: ChatMasterId: $_chatMasterId');
+        
+        final result = await ApiService.postChatDetail(
+          chatMasterId: _chatMasterId!,
+          value: 'Voice message', // API requires value field
+          voiceFilePath: recordingPath,
+        );
+        
+        if (result != null) {
+          // API returned success - update message status to show check mark
+          setState(() {
+            final index = _messages.indexWhere((m) => m.id == tempId);
+            if (index != -1) {
+              _messages[index] = ChatMessage(
+                id: result.containsKey('id') ? result['id'] : tempId,
+                value: _messages[index].value,
+                date: _messages[index].date,
+                userId: _messages[index].userId,
+                isSent: true, // Show check mark
                 status: 'Delivered',
+                isMine: _messages[index].isMine,
+                fileUrl: _messages[index].fileUrl,
+                sender: _messages[index].sender,
+                messageType: _messages[index].messageType,
+                duration: _messages[index].duration,
               );
             }
-            
-            // Show success feedback
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Voice message sent!'),
-                duration: Duration(seconds: 2),
-              ),
-            );
-          } else {
-            // Show error feedback
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Failed to send voice message'),
-                backgroundColor: Colors.red,
-              ),
+          });
+          
+          // Mark voice message as delivered
+          if (result.containsKey('id') && result['id'] != null) {
+            await ApiService.updateChatDetailStatus(
+              chatDetailIds: [result['id']],
+              status: 'Delivered',
             );
           }
-        } catch (e) {
-          print('Error sending voice message: $e');
+          
+          // Show success feedback
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Error sending voice message'),
+            SnackBar(
+              content: const Text('Voice message sent!', textAlign: TextAlign.center),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              margin: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 10,
+                left: 20,
+                right: 20,
+              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else {
+          // Show error feedback
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Failed to send voice message', textAlign: TextAlign.center),
               backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              margin: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 10,
+                left: 20,
+                right: 20,
+              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
           );
         }
-      } else {
-        // Show error if requirements not met
-        String errorMessage = '';
-        if (_userInfo == null) {
-          errorMessage = 'Please login to send voice messages';
-        } else if (_selectedUser == null) {
-          errorMessage = 'Please select a user to send voice message to';
-        } else if (_chatMasterId == null) {
-          errorMessage = 'Chat not initialized properly';
-        } else {
-          errorMessage = 'Voice message sent in guest mode!';
-        }
-        
+      } catch (e) {
+        print('Error sending voice message: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(errorMessage),
-            backgroundColor: errorMessage.contains('guest') ? Colors.green : Colors.orange,
-            duration: const Duration(seconds: 2),
+            content: const Text('Error sending voice message', textAlign: TextAlign.center),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 10,
+              left: 20,
+              right: 20,
+            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
     } else {
+      // Show error if requirements not met
+      String errorMessage = '';
+      if (_userInfo == null) {
+        errorMessage = 'Please login to send voice messages';
+      } else if (_selectedUser == null) {
+        errorMessage = 'Please select a user to send voice message to';
+      } else if (_chatMasterId == null) {
+        errorMessage = 'Chat not initialized properly';
+      } else {
+        errorMessage = 'Voice message sent in guest mode!';
+      }
+      
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to record voice message'),
-          backgroundColor: Colors.red,
+        SnackBar(
+          content: Text(errorMessage, textAlign: TextAlign.center),
+          backgroundColor: errorMessage.contains('guest') ? Colors.green : Colors.orange,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            top: MediaQuery.of(context).padding.top + 10,
+            left: 20,
+            right: 20,
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     }
@@ -1048,6 +1060,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
       );
     }
 
+    // Standalone mode: render only chat detail
+    if (widget.standalone) {
+      return Scaffold(
+        body: SafeArea(
+          child: _selectedUser == null
+              ? const Center(child: Text('Select a contact'))
+              : _buildChatArea(standalone: true),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -1160,12 +1183,14 @@ class _ChatroomPageState extends State<ChatroomPage> {
                         width: 50,
                         height: 50,
                         color: Theme.of(context).primaryColor,
-                        child: avatarUrl.isNotEmpty 
-                          ? Image.network(
-                              ApiService.getFullAvatarUrl(avatarUrl),
-                              width: 50,
-                              height: 50,
-                              fit: BoxFit.cover,
+                        child: () {
+                          final url = ApiService.getFullAvatarUrl(avatarUrl);
+                          return url != null
+                              ? Image.network(
+                                  url,
+                                  width: 50,
+                                  height: 50,
+                                  fit: BoxFit.cover,
                               loadingBuilder: (context, child, loadingProgress) {
                                 if (loadingProgress == null) return child;
                                 return const Center(
@@ -1193,16 +1218,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
                                 );
                               },
                             )
-                          : Center(
-                              child: Text(
-                                fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                ),
-                              ),
-                            ),
+                              : Center(
+                                  child: Text(
+                                    fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                );
+                        }(),
                       ),
                     ),
                     if (isOnline)
@@ -1310,19 +1336,23 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 child: CircleAvatar(
                   radius: 30,
                   backgroundColor: Colors.grey[400],
-                  backgroundImage: avatarUrl.isNotEmpty 
-                    ? NetworkImage(ApiService.getFullAvatarUrl(avatarUrl)) 
-                    : null,
-                  child: avatarUrl.isEmpty 
-                    ? Text(
-                        fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 24,
-                        ),
-                      )
-                    : null,
+                  backgroundImage: () {
+                    final url = ApiService.getFullAvatarUrl(avatarUrl);
+                    return url != null ? NetworkImage(url) : null;
+                  }(),
+                  child: () {
+                    final url = ApiService.getFullAvatarUrl(avatarUrl);
+                    return url == null
+                        ? Text(
+                            fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 24,
+                            ),
+                          )
+                        : null;
+                  }(),
                 ),
               ),
             ),
@@ -1370,12 +1400,14 @@ class _ChatroomPageState extends State<ChatroomPage> {
               width: 56,
               height: 56,
               color: const Color(0xFF075E54),
-              child: avatarUrl.isNotEmpty 
-                ? Image.network(
-                    ApiService.getFullAvatarUrl(avatarUrl),
-                    width: 56,
-                    height: 56,
-                    fit: BoxFit.cover,
+              child: () {
+                final url = ApiService.getFullAvatarUrl(avatarUrl);
+                return url != null
+                    ? Image.network(
+                        url,
+                        width: 56,
+                        height: 56,
+                        fit: BoxFit.cover,
                     loadingBuilder: (context, child, loadingProgress) {
                       if (loadingProgress == null) return child;
                       return const Center(
@@ -1403,16 +1435,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
                       );
                     },
                   )
-                : Center(
-                    child: Text(
-                      fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                      ),
-                    ),
-                  ),
+                    : Center(
+                        child: Text(
+                          fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                        ),
+                      );
+              }(),
             ),
           ),
         ),
@@ -1455,7 +1488,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     );
   }
 
-  Widget _buildChatArea() {
+  Widget _buildChatArea({bool standalone = false}) {
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFFECE5DD),
@@ -1463,7 +1496,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
       child: Column(
         children: [
           // Chat header
-          _buildChatHeader(),
+          _buildChatHeader(standalone: standalone),
           // Messages area
           Expanded(
             child: Container(
@@ -1496,7 +1529,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     );
   }
 
-  Widget _buildChatHeader() {
+  Widget _buildChatHeader({bool standalone = false}) {
     if (_selectedUser == null) return const SizedBox.shrink();
     
     final fullName = '${_selectedUser!['firstName']} ${_selectedUser!['lastName']}';
@@ -1513,24 +1546,34 @@ class _ChatroomPageState extends State<ChatroomPage> {
       ),
       child: Row(
         children: [
+          // Back button in standalone mode
+          if (standalone)
+            IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              onPressed: () => Navigator.pop(context),
+            ),
           Stack(
             children: [
               CircleAvatar(
                 radius: 20,
                 backgroundColor: Colors.white,
-                backgroundImage: avatarUrl.isNotEmpty 
-                  ? NetworkImage(ApiService.getFullAvatarUrl(avatarUrl)) 
-                  : null,
-                child: avatarUrl.isEmpty 
-                  ? Text(
-                      fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                      style: TextStyle(
-                        color: Theme.of(context).primaryColor,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    )
-                  : null,
+                backgroundImage: () {
+                  final url = ApiService.getFullAvatarUrl(avatarUrl);
+                  return url != null ? NetworkImage(url) : null;
+                }(),
+                child: () {
+                  final url = ApiService.getFullAvatarUrl(avatarUrl);
+                  return url == null
+                      ? Text(
+                          fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
+                          style: TextStyle(
+                            color: Theme.of(context).primaryColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        )
+                      : null;
+                }(),
               ),
               if (isOnline)
                 Positioned(
@@ -1671,107 +1714,424 @@ class _ChatroomPageState extends State<ChatroomPage> {
     );
   }
 
+  // Start voice recording (hold or lock mode)
+  Future<void> _startVoiceRecording() async {
+    if (_isRecording) return;
+    
+    final hasPermission = await _voiceRecorder.checkPermissions();
+    if (!hasPermission) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('🎤 Microphone permission required'),
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 10,
+              left: 10,
+              right: 10,
+            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      await _voiceRecorder.startRecording();
+      setState(() {
+        _isRecording = true;
+        _recordingDuration = Duration.zero;
+        _waveformData = [];
+      });
+      
+      // Start waveform animation
+      _startWaveformAnimation();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('🎤 Recording...'),
+            duration: const Duration(seconds: 1),
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 10,
+              left: 10,
+              right: 10,
+            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error starting recording: $e');
+    }
+  }
+
+  // Stop and send voice (for hold mode)
+  Future<void> _stopAndSendVoice() async {
+    if (!_isRecording) return;
+    
+    try {
+      final path = await _voiceRecorder.stopRecording();
+      setState(() {
+        _isRecording = false;
+        _isHoldingMic = false;
+        _micDragOffset = 0.0;
+        _waveformData = [];
+      });
+      
+      if (path != null && path.isNotEmpty) {
+        await _sendVoiceMessage(path);
+      }
+    } catch (e) {
+      print('Error stopping recording: $e');
+      setState(() {
+        _isRecording = false;
+        _isHoldingMic = false;
+        _micDragOffset = 0.0;
+      });
+    }
+  }
+
+  // Lock recording (for slide-up mode)
+  Future<void> _lockRecording() async {
+    if (!_isRecording) return;
+    
+    try {
+      final path = await _voiceRecorder.stopRecording();
+      setState(() {
+        _isRecording = false;
+        _isRecordingLocked = true;
+        _recordedVoicePath = path;
+        _micDragOffset = 0.0;
+        _isHoldingMic = false;
+      });
+    } catch (e) {
+      print('Error locking recording: $e');
+    }
+  }
+
+  // Cancel recording
+  void _cancelRecording() async {
+    if (_isRecording) {
+      await _voiceRecorder.stopRecording();
+    }
+    setState(() {
+      _isRecording = false;
+      _isRecordingLocked = false;
+      _recordedVoicePath = null;
+      _isHoldingMic = false;
+      _micDragOffset = 0.0;
+      _recordingDuration = Duration.zero;
+      _waveformData = [];
+    });
+  }
+
+  // Send locked voice message
+  Future<void> _sendLockedVoiceMessage() async {
+    if (_recordedVoicePath == null) return;
+    
+    await _sendVoiceMessage(_recordedVoicePath!);
+    setState(() {
+      _isRecordingLocked = false;
+      _recordedVoicePath = null;
+      _recordingDuration = Duration.zero;
+    });
+  }
+
+  // Animate waveform
+  void _startWaveformAnimation() {
+    Future.doWhile(() async {
+      if (!_isRecording) return false;
+      
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (mounted && _isRecording) {
+        setState(() {
+          _recordingDuration += const Duration(milliseconds: 100);
+          // Generate random waveform data
+          if (_waveformData.length >= 30) {
+            _waveformData.removeAt(0);
+          }
+          _waveformData.add(0.2 + (0.8 * (DateTime.now().millisecond % 100) / 100));
+        });
+      }
+      return _isRecording;
+    });
+  }
+
   Widget _buildWhatsAppInputArea() {
+    final hasText = _messageController.text.trim().isNotEmpty;
+    
+    // Show locked recording UI
+    if (_isRecordingLocked) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        color: Colors.white,
+        child: Row(
+          children: [
+            // Waveform visualization
+            Expanded(
+              child: Container(
+                height: 50,
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(25),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 16),
+                    const Icon(Icons.mic, color: Colors.red, size: 20),
+                    const SizedBox(width: 12),
+                    Text(
+                      _formatDuration(_recordingDuration),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.red,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildWaveform(isLocked: true),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Cancel button
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              onPressed: _cancelRecording,
+            ),
+            // Send button
+            Container(
+              decoration: const BoxDecoration(
+                color: Color(0xFF075E54),
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                onPressed: _sendLockedVoiceMessage,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       color: Colors.white,
-      child: Row(
+      child: Stack(
         children: [
-          // Voice message button (outside text input)
-          GestureDetector(
-            onLongPressStart: (_) => _startRecording(),
-            onLongPressEnd: (_) => _stopRecording(),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Hold to record voice message'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            },
-            child: Container(
-              margin: const EdgeInsets.only(right: 8),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _isRecording 
-                      ? Colors.red.withOpacity(0.2)
-                      : const Color(0xFF075E54).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(25),
-                ),
-                child: Icon(
-                  _isRecording ? Icons.mic : Icons.mic_none,
-                  color: _isRecording ? Colors.red : const Color(0xFF075E54),
-                  size: 24,
-                ),
-              ),
-            ),
-          ),
-          // Text input area
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(25),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.emoji_emotions_outlined, 
-                        color: Colors.grey),
-                    onPressed: () {
-                      // TODO: Implement emoji picker
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Emoji picker coming soon!'),
-                          duration: Duration(seconds: 1),
-                        ),
-                      );
-                    },
+          Row(
+            children: [
+              // Text input area with emoji, attach, camera
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(25),
+                    border: Border.all(color: Colors.grey.shade300),
                   ),
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      decoration: const InputDecoration(
-                        hintText: 'Type a message',
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(vertical: 10),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.emoji_emotions_outlined, color: Colors.grey),
+                        onPressed: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text('Emoji picker coming soon!', textAlign: TextAlign.center),
+                              duration: const Duration(seconds: 1),
+                              behavior: SnackBarBehavior.floating,
+                              margin: EdgeInsets.only(
+                                top: MediaQuery.of(context).padding.top + 10,
+                                left: 20,
+                                right: 20,
+                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              backgroundColor: Colors.black87,
+                            ),
+                          );
+                        },
                       ),
-                      maxLines: null,
-                      onSubmitted: (_) => _sendMessage(),
+                      Expanded(
+                        child: TextField(
+                          controller: _messageController,
+                          decoration: const InputDecoration(
+                            hintText: 'Type a message',
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          maxLines: null,
+                          onSubmitted: (_) => _sendMessage(),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.attach_file, color: Colors.grey),
+                        onPressed: _showAttachmentOptions,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.camera_alt, color: Colors.grey),
+                        onPressed: _takePhoto,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Right-side action: mic when empty, send when has text
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 150),
+                transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
+                child: hasText
+                    ? Container(
+                        key: const ValueKey('send'),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF075E54),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                          onPressed: _sendMessage,
+                        ),
+                      )
+                    : GestureDetector(
+                        key: const ValueKey('mic'),
+                        onVerticalDragStart: (_) {
+                          setState(() {
+                            _isHoldingMic = true;
+                            _micDragOffset = 0.0;
+                          });
+                          _startVoiceRecording();
+                        },
+                        onVerticalDragUpdate: (details) {
+                          setState(() {
+                            _micDragOffset += details.delta.dy;
+                            // Clamp offset between -80 and 0
+                            if (_micDragOffset < -80) _micDragOffset = -80;
+                            if (_micDragOffset > 0) _micDragOffset = 0;
+                          });
+                        },
+                        onVerticalDragEnd: (_) {
+                          if (_micDragOffset < -60) {
+                            // Locked mode (slid up far enough)
+                            _lockRecording();
+                          } else {
+                            // Send immediately (hold mode)
+                            _stopAndSendVoice();
+                          }
+                        },
+                        onTapDown: (_) {
+                          setState(() => _isHoldingMic = true);
+                          _startVoiceRecording();
+                        },
+                        onTapUp: (_) {
+                          _stopAndSendVoice();
+                        },
+                        onTapCancel: () {
+                          _cancelRecording();
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: _isRecording ? Colors.red : const Color(0xFF075E54),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            _isRecording ? Icons.mic : Icons.mic_none,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+          // Recording indicator overlay
+          if (_isRecording && !_isRecordingLocked)
+            Positioned.fill(
+              child: Container(
+                color: Colors.white,
+                child: Row(
+                  children: [
+                    const SizedBox(width: 16),
+                    const Icon(Icons.mic, color: Colors.red, size: 20),
+                    const SizedBox(width: 12),
+                    Text(
+                      _formatDuration(_recordingDuration),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.red,
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.attach_file, color: Colors.grey),
-                    onPressed: _showAttachmentOptions,
-                  ),
-                ],
+                    const SizedBox(width: 12),
+                    Expanded(child: _buildWaveform(isLocked: false)),
+                    const SizedBox(width: 12),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.keyboard_arrow_up,
+                          color: _micDragOffset < -30 ? const Color(0xFF075E54) : Colors.grey,
+                        ),
+                        Text(
+                          _micDragOffset < -30 ? 'Release to lock' : 'Slide up to lock',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _micDragOffset < -30 ? const Color(0xFF075E54) : Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 60),
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          // Send button
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            decoration: BoxDecoration(
-              color: _messageController.text.trim().isNotEmpty 
-                  ? const Color(0xFF075E54) 
-                  : Colors.grey[400],
-              shape: BoxShape.circle,
-            ),
-            child: IconButton(
-              icon: const Icon(Icons.send, color: Colors.white, size: 20),
-              onPressed: _messageController.text.trim().isNotEmpty 
-                  ? _sendMessage 
-                  : null,
-            ),
-          ),
         ],
       ),
     );
-  }  Widget _buildWhatsAppMessageBubble(ChatMessage message) {
+  }
+  
+  // Waveform widget
+  Widget _buildWaveform({required bool isLocked}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(
+        isLocked ? 30 : 20,
+        (index) {
+          final amplitude = _waveformData.isNotEmpty && index < _waveformData.length
+              ? _waveformData[index]
+              : 0.3;
+          return Container(
+            margin: const EdgeInsets.symmetric(horizontal: 1),
+            width: 3,
+            height: 20 * amplitude,
+            decoration: BoxDecoration(
+              color: isLocked ? Colors.red : Colors.red.shade400,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          );
+        },
+      ),
+    );
+  }
+  
+  // Format duration for recording
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
+  }
+  
+  Widget _buildWhatsAppMessageBubble(ChatMessage message) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
       child: Row(
@@ -2201,12 +2561,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
         );
       }
     });
-  }
-
-  String _formatDuration(Duration duration) {
-    final minutes = duration.inMinutes;
-    final seconds = duration.inSeconds % 60;
-    return '${minutes.toString().padLeft(1, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   Widget _buildDateHeader(DateTime date) {

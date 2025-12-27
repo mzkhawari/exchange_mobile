@@ -105,9 +105,9 @@ class ApiService {
   }
 
   // Helper method to get full avatar URL
-  static String getFullAvatarUrl(String? picUrlAvatar) {
+  static String? getFullAvatarUrl(String? picUrlAvatar) {
     if (picUrlAvatar == null || picUrlAvatar.isEmpty || picUrlAvatar == 'null') {
-      return '';
+      return null;
     }
     
     // If it's already a full URL, return as is
@@ -121,6 +121,15 @@ class ApiService {
     // Ensure path starts with /
     if (!cleanPath.startsWith('/')) {
       cleanPath = '/$cleanPath';
+    }
+    
+    // Split path and encode only the filename to handle spaces
+    final parts = cleanPath.split('/');
+    if (parts.length > 1) {
+      final fileName = parts.last;
+      final encodedFileName = Uri.encodeComponent(fileName);
+      parts[parts.length - 1] = encodedFileName;
+      cleanPath = parts.join('/');
     }
     
     // Construct the full URL using the correct image URL
@@ -435,7 +444,10 @@ class ApiService {
         print('Token expired while posting chat detail');
         return null;
       } else {
-        print('Failed to post chat detail: ${response.statusCode} - $responseBody');
+        print('❌ Failed to post chat detail: ${response.statusCode}');
+        print('❌ Response body: $responseBody');
+        print('❌ Request fields: ${request.fields}');
+        print('❌ Request files: ${request.files.map((f) => f.field).toList()}');
         return null;
       }
     } catch (e) {

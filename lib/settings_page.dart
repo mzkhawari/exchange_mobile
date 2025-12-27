@@ -28,6 +28,11 @@ class _SettingsPageState extends State<SettingsPage> {
   List<Map<String, dynamic>> _banks = [];
   
   DateTime? _lastSyncTime;
+  
+  // Loading states for individual sections
+  bool _loadingLocation = false;
+  bool _loadingFinancial = false;
+  bool _loadingOrganizational = false;
 
   @override
   void initState() {
@@ -77,6 +82,171 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// بروزرسانی داده‌های مکانی (کشورها، استان‌ها، مناطق، شهرها)
+  Future<void> _syncLocationData() async {
+    setState(() => _loadingLocation = true);
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      print('📡 Syncing location data from API...');
+      final countriesData = await ApiService.getCountries();
+      final provincesData = await ApiService.getProvinces();
+      final zonesData = await ApiService.getZones();
+      final citiesData = <Map<String, dynamic>>[]; // Empty placeholder
+      
+      if (countriesData.isNotEmpty) {
+        await prefs.setString('settings_countries', jsonEncode(countriesData));
+        print('✅ Countries saved: ${countriesData.length} items');
+      }
+      
+      if (provincesData.isNotEmpty) {
+        await prefs.setString('settings_provinces', jsonEncode(provincesData));
+        print('✅ Provinces saved: ${provincesData.length} items');
+      }
+      
+      if (zonesData.isNotEmpty) {
+        await prefs.setString('settings_zones', jsonEncode(zonesData));
+        print('✅ Zones saved: ${zonesData.length} items');
+      }
+      
+      await prefs.setString('settings_last_sync', DateTime.now().toIso8601String());
+      await _loadCachedData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Location data synced successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error syncing location data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Location sync error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _loadingLocation = false);
+    }
+  }
+  
+  /// بروزرسانی داده‌های مالی (ارزها، بانک‌ها، روش‌های پرداخت)
+  Future<void> _syncFinancialData() async {
+    setState(() => _loadingFinancial = true);
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      print('📡 Syncing financial data from API...');
+      final transferData = await ApiService.getTransferCashSelectOptions();
+      
+      if (transferData != null) {
+        if (transferData.containsKey('currencies') && transferData['currencies'] != null) {
+          await prefs.setString('settings_currencies', jsonEncode(transferData['currencies']));
+          print('✅ Currencies saved: ${(transferData['currencies'] as List).length} items');
+        }
+        
+        if (transferData.containsKey('banks') && transferData['banks'] != null) {
+          await prefs.setString('settings_banks', jsonEncode(transferData['banks']));
+          print('✅ Banks saved: ${(transferData['banks'] as List).length} items');
+        }
+        
+        if (transferData.containsKey('paymentMethods') && transferData['paymentMethods'] != null) {
+          await prefs.setString('settings_payment_methods', jsonEncode(transferData['paymentMethods']));
+          print('✅ Payment Methods saved: ${(transferData['paymentMethods'] as List).length} items');
+        }
+      }
+      
+      await prefs.setString('settings_last_sync', DateTime.now().toIso8601String());
+      await _loadCachedData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Financial data synced successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error syncing financial data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Financial sync error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _loadingFinancial = false);
+    }
+  }
+  
+  /// بروزرسانی داده‌های سازمانی (شعبات، انواع شناسنامه، انواع حساب، انواع حواله)
+  Future<void> _syncOrganizationalData() async {
+    setState(() => _loadingOrganizational = true);
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      print('📡 Syncing organizational data from API...');
+      final accountData = await ApiService.getAccountSelectOptions();
+      
+      if (accountData != null) {
+        if (accountData.containsKey('branches') && accountData['branches'] != null) {
+          await prefs.setString('settings_branches', jsonEncode(accountData['branches']));
+          print('✅ Branches saved: ${(accountData['branches'] as List).length} items');
+        }
+        
+        if (accountData.containsKey('identityTypes') && accountData['identityTypes'] != null) {
+          await prefs.setString('settings_identity_types', jsonEncode(accountData['identityTypes']));
+          print('✅ Identity Types saved: ${(accountData['identityTypes'] as List).length} items');
+        }
+        
+        if (accountData.containsKey('accountTypes') && accountData['accountTypes'] != null) {
+          await prefs.setString('settings_account_types', jsonEncode(accountData['accountTypes']));
+          print('✅ Account Types saved: ${(accountData['accountTypes'] as List).length} items');
+        }
+        
+        if (accountData.containsKey('transferTypes') && accountData['transferTypes'] != null) {
+          await prefs.setString('settings_transfer_types', jsonEncode(accountData['transferTypes']));
+          print('✅ Transfer Types saved: ${(accountData['transferTypes'] as List).length} items');
+        }
+      }
+      
+      await prefs.setString('settings_last_sync', DateTime.now().toIso8601String());
+      await _loadCachedData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Organizational data synced successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error syncing organizational data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Organizational sync error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _loadingOrganizational = false);
+    }
+  }
+  
   /// دریافت همه داده‌ها از API و ذخیره در SharedPreferences
   Future<void> _syncAllData() async {
     setState(() => _isLoading = true);
@@ -476,6 +646,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       _buildDataCard('Zones', _zones, Icons.map, Colors.green),
                       _buildDataCard('Cities', _cities, Icons.location_city_outlined, Colors.green),
                     ],
+                    onRefresh: _syncLocationData,
+                    isLoading: _loadingLocation,
                   ),
                   
                   const SizedBox(height: 16),
@@ -490,6 +662,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       _buildDataCard('Banks', _banks, Icons.account_balance_wallet, Colors.orange),
                       _buildDataCard('Payment Methods', _paymentMethods, Icons.payment, Colors.orange),
                     ],
+                    onRefresh: _syncFinancialData,
+                    isLoading: _loadingFinancial,
                   ),
                   
                   const SizedBox(height: 16),
@@ -505,6 +679,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       _buildDataCard('Account Types', _accountTypes, Icons.account_balance, Colors.purple),
                       _buildDataCard('Transfer Types', _transferTypes, Icons.swap_horiz, Colors.purple),
                     ],
+                    onRefresh: _syncOrganizationalData,
+                    isLoading: _loadingOrganizational,
                   ),
                   
                   const SizedBox(height: 20),
@@ -514,7 +690,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildCategorySection(String title, IconData icon, MaterialColor color, List<Widget> cards) {
+  Widget _buildCategorySection(String title, IconData icon, MaterialColor color, List<Widget> cards, {VoidCallback? onRefresh, bool isLoading = false}) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -543,14 +719,31 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: Icon(icon, color: color[700], size: 24),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: color[800],
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: color[800],
+                    ),
                   ),
                 ),
+                if (onRefresh != null)
+                  IconButton(
+                    icon: isLoading 
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(color[600]!),
+                            ),
+                          )
+                        : Icon(Icons.refresh, color: color[600], size: 22),
+                    onPressed: isLoading ? null : onRefresh,
+                    tooltip: 'Refresh $title',
+                  ),
               ],
             ),
           ),

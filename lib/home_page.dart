@@ -5,6 +5,7 @@ import 'account-form.dart';
 import 'customer-list-page.dart';
 import 'transfer-cash.dart';
 import 'chatroom_page.dart';
+import 'chat_list_page.dart';
 import 'settings_page.dart';
 import 'add_transfer_page.dart';
 import 'services/api_service.dart';
@@ -81,7 +82,7 @@ class _HomePageState extends State<HomePage> {
   void _openChatroom(BuildContext context) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const ChatroomPage()),
+      MaterialPageRoute(builder: (context) => const ChatListPage()),
     );
   }
 

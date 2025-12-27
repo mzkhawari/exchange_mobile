@@ -22,7 +22,7 @@ class _CustomerListPageState extends State<CustomerListPage> {
   String searchQuery = '';
   String baseUrlImages = 'https://katawazexchange.com/';
   
-  // داده‌های تنظیمات
+  // Settings data
   Map<String, String> _accountTypeNames = {};
   Map<String, String> _identityTypeNames = {};
   Map<String, String> _countryNames = {};
@@ -36,11 +36,11 @@ class _CustomerListPageState extends State<CustomerListPage> {
     fetchCustomers();
   }
   
-  /// بارگذاری داده‌های تنظیمات
+  /// Load settings data
   Future<void> _loadSettingsData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // بارگذاری انواع حساب
+    // Load account types
     final accountTypesJson = prefs.getString('settings_account_types');
     if (accountTypesJson != null) {
       final accountTypes = List<Map<String, dynamic>>.from(jsonDecode(accountTypesJson));
@@ -52,7 +52,7 @@ class _CustomerListPageState extends State<CustomerListPage> {
       });
     }
     
-    // بارگذاری انواع شناسنامه
+    // Load identity types
     final identityTypesJson = prefs.getString('settings_identity_types');
     if (identityTypesJson != null) {
       final identityTypes = List<Map<String, dynamic>>.from(jsonDecode(identityTypesJson));
@@ -64,7 +64,7 @@ class _CustomerListPageState extends State<CustomerListPage> {
       });
     }
     
-    // بارگذاری کشورها
+    // Load countries
     final countriesJson = prefs.getString('settings_countries');
     if (countriesJson != null) {
       final countries = List<Map<String, dynamic>>.from(jsonDecode(countriesJson));
@@ -76,7 +76,7 @@ class _CustomerListPageState extends State<CustomerListPage> {
       });
     }
     
-    // بارگذاری استان‌ها
+    // Load provinces
     final provincesJson = prefs.getString('settings_provinces');
     if (provincesJson != null) {
       final provinces = List<Map<String, dynamic>>.from(jsonDecode(provincesJson));
@@ -88,7 +88,7 @@ class _CustomerListPageState extends State<CustomerListPage> {
       });
     }
     
-    // بارگذاری مناطق
+    // Load zones
     final zonesJson = prefs.getString('settings_zones');
     if (zonesJson != null) {
       final zones = List<Map<String, dynamic>>.from(jsonDecode(zonesJson));
@@ -164,12 +164,12 @@ class _CustomerListPageState extends State<CustomerListPage> {
   }
 
   void showCustomerPopup(Map<String, dynamic> customer) {
-    // دریافت نام‌های قابل خواندن از داده‌های تنظیمات
-    final accountTypeName = _accountTypeNames[customer['accountTypeId']?.toString()] ?? 'نامشخص';
-    final identityTypeName = _identityTypeNames[customer['identityTypeId']?.toString()] ?? 'نامشخص';
-    final countryName = _countryNames[customer['countryId']?.toString()] ?? 'نامشخص';
-    final provinceName = _provinceNames[customer['provinceId']?.toString()] ?? 'نامشخص';
-    final zoneName = _zoneNames[customer['zoneId']?.toString()] ?? 'نامشخص';
+    // Get readable names from settings data
+    final accountTypeName = _accountTypeNames[customer['accountTypeId']?.toString()] ?? 'Unknown';
+    final identityTypeName = _identityTypeNames[customer['identityTypeId']?.toString()] ?? 'Unknown';
+    final countryName = _countryNames[customer['countryId']?.toString()] ?? 'Unknown';
+    final provinceName = _provinceNames[customer['provinceId']?.toString()] ?? 'Unknown';
+    final zoneName = _zoneNames[customer['zoneId']?.toString()] ?? 'Unknown';
     
     showDialog(
       context: context,
@@ -189,7 +189,7 @@ class _CustomerListPageState extends State<CustomerListPage> {
                   children: [
                     Expanded(
                       child: Text(
-                        customer['fullName'] ?? 'جزئیات مشتری',
+                        customer['fullName'] ?? 'Customer Details',
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -211,7 +211,7 @@ class _CustomerListPageState extends State<CustomerListPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // عکس پروفایل
+                        // Profile picture
                         if (customer['picUrlAvatar'] != null)
                           Center(
                             child: CircleAvatar(
@@ -221,45 +221,45 @@ class _CustomerListPageState extends State<CustomerListPage> {
                           ),
                         const SizedBox(height: 16),
                         
-                        // اطلاعات شخصی
+                        // Personal info
                         _buildInfoSection(
-                          'اطلاعات شخصی',
+                          'Personal Info',
                           Icons.person,
                           [
-                            _buildInfoRow('شماره حساب', customer['accountNo']?.toString() ?? '-'),
-                            _buildInfoRow('نام کامل', '${customer['firstName'] ?? ''} ${customer['lastName'] ?? ''}'),
-                            _buildInfoRow('شماره تماس', customer['phoneNumber']?.toString() ?? '-'),
-                            _buildInfoRow('شغل', customer['job']?.toString() ?? '-'),
-                            _buildInfoRow('نوع حساب', accountTypeName),
-                            _buildInfoRow('نوع شناسنامه', identityTypeName),
+                            _buildInfoRow('Account No', customer['accountNo']?.toString() ?? '-'),
+                            _buildInfoRow('Full Name', '${customer['firstName'] ?? ''} ${customer['lastName'] ?? ''}'),
+                            _buildInfoRow('Phone Number', customer['phoneNumber']?.toString() ?? '-'),
+                            _buildInfoRow('Job', customer['job']?.toString() ?? '-'),
+                            _buildInfoRow('Account Type', accountTypeName),
+                            _buildInfoRow('Identity Type', identityTypeName),
                           ],
                         ),
                         
                         const SizedBox(height: 16),
                         
-                        // اطلاعات مکانی
+                        // Location info
                         _buildInfoSection(
-                          'اطلاعات مکانی',
+                          'Location Info',
                           Icons.location_on,
                           [
-                            _buildInfoRow('کشور', countryName),
-                            _buildInfoRow('استان', provinceName),
-                            _buildInfoRow('منطقه', zoneName),
+                            _buildInfoRow('Country', countryName),
+                            _buildInfoRow('Province', provinceName),
+                            _buildInfoRow('Zone', zoneName),
                             if (customer['address'] != null)
-                              _buildInfoRow('آدرس', customer['address'].toString()),
+                              _buildInfoRow('Address', customer['address'].toString()),
                           ],
                         ),
                         
                         const SizedBox(height: 16),
                         
-                        // وضعیت
+                        // Status
                         _buildInfoSection(
-                          'وضعیت',
+                          'Status',
                           Icons.info_outline,
                           [
                             _buildInfoRow(
-                              'وضعیت',
-                              customer['statusText']?.toString() ?? 'نامشخص',
+                              'Status',
+                              customer['statusText']?.toString() ?? 'Unknown',
                               valueColor: _getStatusColor(customer['statusText']),
                             ),
                           ],
@@ -271,13 +271,13 @@ class _CustomerListPageState extends State<CustomerListPage> {
 
                 const SizedBox(height: 16),
 
-                // دکمه بستن
+                // Close button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.close),
-                    label: const Text('بستن'),
+                    label: const Text('Close'),
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.all(14),
                     ),
@@ -363,159 +363,412 @@ class _CustomerListPageState extends State<CustomerListPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Customer Accounts List'),
-        centerTitle: true,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          children: [
-            // Search & Add
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    onSubmitted: onSearch,
-                    decoration: const InputDecoration(
-                      hintText: 'Search by name or account number...',
-                      prefixIcon: Icon(Icons.search),
-                      border: OutlineInputBorder(),
-                    ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.blue.shade50,
+              Colors.purple.shade50,
+              Colors.pink.shade50,
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Header with gradient
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.blue.shade700, Colors.purple.shade600],
                   ),
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(30),
+                    bottomRight: Radius.circular(30),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.blue.withOpacity(0.3),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: onAddCustomer,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add'),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            // Status buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _statusButton('All Accounts', 0, Colors.grey),
-                _statusButton('Awaiting Confirmation', 1, Colors.amber),
-                _statusButton('Confirmed', 2, Colors.blue),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            // Customer list
-            Expanded(
-              child: isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : dataList.isEmpty
-                      ? const Center(child: Text('No data found'))
-                      : RefreshIndicator(
-                          onRefresh: fetchCustomers,
-                          child: ListView.builder(
-                            itemCount: dataList.length,
-                            itemBuilder: (context, index) {
-                              final item = dataList[index];
-                              return Card(
-                                elevation: 4,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                                child: ListTile(
-                                  contentPadding: const EdgeInsets.all(12),
-                                  leading: CircleAvatar(
-                                    radius: 28,
-                                    backgroundImage: item['picUrlAvatarThumb'] != null
-                                        ? NetworkImage(baseUrlImages + item['picUrlAvatarThumb'])
-                                        : null,
-                                    child: item['picUrlAvatarThumb'] == null
-                                        ? const Icon(Icons.person, size: 28)
-                                        : null,
-                                  ),
-                                  title: Text(
-                                    item['firstName'] + item['lastName'] ?? 'No Name',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(item['phoneNumber'] ?? 'No Phone'),
-                                      Text('Account No: ${item['accountNo']}'),
-                                    ],
-                                  ),
-                                  trailing: IconButton(
-                                    icon: const Icon(Icons.chevron_right),
-                                    onPressed: () => showCustomerPopup(item),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-            ),
-
-            // Pagination
-            if (!isLoading)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
                   children: [
-                    Text('Total Count: $totalCount'),
                     Row(
                       children: [
                         IconButton(
-                          onPressed: prevPage,
-                          icon: const Icon(Icons.arrow_back_ios),
+                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                          onPressed: () => Navigator.pop(context),
                         ),
-                        Text('$currentPage'),
+                        const Expanded(
+                          child: Text(
+                            'Customer Accounts',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                         IconButton(
-                          onPressed: nextPage,
-                          icon: const Icon(Icons.arrow_forward_ios),
+                          icon: const Icon(Icons.refresh, color: Colors.white),
+                          onPressed: fetchCustomers,
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 15),
+                    
+                    // Search bar
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 5,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: TextField(
+                        onSubmitted: onSearch,
+                        decoration: InputDecoration(
+                          hintText: 'Search by name or account number...',
+                          prefixIcon: Icon(Icons.search, color: Colors.blue.shade700),
+                          suffixIcon: IconButton(
+                            icon: Icon(Icons.add_circle, color: Colors.green.shade600),
+                            onPressed: onAddCustomer,
+                          ),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
-          ],
+
+              const SizedBox(height: 10),
+
+              // Status filter chips
+              Container(
+                height: 50,
+                margin: const EdgeInsets.symmetric(horizontal: 10),
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    _buildStatusChip('All', 0, Icons.list, Colors.grey),
+                    _buildStatusChip('Awaiting', 1, Icons.pending, Colors.orange),
+                    _buildStatusChip('Confirmed', 2, Icons.check_circle, Colors.green),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 10),
+
+              // Stats bar
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 15),
+                padding: const EdgeInsets.all(15),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildStatItem(Icons.people, 'Total', totalCount.toString(), Colors.blue),
+                    _buildStatItem(Icons.layers, 'Page', currentPage.toString(), Colors.purple),
+                    _buildStatItem(Icons.dataset, 'Showing', dataList.length.toString(), Colors.green),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 15),
+
+              // Customer list
+              Expanded(
+                child: isLoading
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(color: Colors.blue.shade700),
+                            const SizedBox(height: 15),
+                            Text(
+                              'Loading customers...',
+                              style: TextStyle(color: Colors.blue.shade700, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      )
+                    : dataList.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.inbox, size: 80, color: Colors.grey.shade400),
+                                const SizedBox(height: 15),
+                                Text(
+                                  'No customers found',
+                                  style: TextStyle(fontSize: 18, color: Colors.grey.shade600),
+                                ),
+                              ],
+                            ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: fetchCustomers,
+                            color: Colors.blue.shade700,
+                            child: ListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 15),
+                              itemCount: dataList.length,
+                              itemBuilder: (context, index) {
+                                final item = dataList[index];
+                                return _buildCustomerCard(item);
+                              },
+                            ),
+                          ),
+              ),
+
+              // Pagination
+              if (!isLoading && totalCount > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, -5),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        onPressed: currentPage > 1 ? prevPage : null,
+                        icon: Icon(
+                          Icons.arrow_back_ios,
+                          color: currentPage > 1 ? Colors.blue.shade700 : Colors.grey,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.blue.shade600, Colors.purple.shade500],
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          'Page $currentPage of ${(totalCount / 10).ceil()}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: (currentPage * 10) < totalCount ? nextPage : null,
+                        icon: Icon(
+                          Icons.arrow_forward_ios,
+                          color: (currentPage * 10) < totalCount ? Colors.blue.shade700 : Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _statusButton(String title, int id, Color color) {
-    final isSelected = selectedStatus == id;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => onStatusChange(id),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          decoration: BoxDecoration(
-            color: isSelected ? color.withOpacity(0.15) : Colors.white,
-            border: Border(
-              bottom: BorderSide(
-                color: isSelected ? Colors.blue : Colors.grey.shade300,
-                width: 3,
-              ),
-            ),
-            borderRadius: BorderRadius.circular(8),
+  Widget _buildStatusChip(String label, int value, IconData icon, Color color) {
+    final isSelected = selectedStatus == value;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: FilterChip(
+        selected: isSelected,
+        label: Row(
+          children: [
+            Icon(icon, size: 18, color: isSelected ? Colors.white : color),
+            const SizedBox(width: 5),
+            Text(label),
+          ],
+        ),
+        onSelected: (_) => onStatusChange(value),
+        backgroundColor: Colors.white,
+        selectedColor: color,
+        labelStyle: TextStyle(
+          color: isSelected ? Colors.white : Colors.black87,
+          fontWeight: FontWeight.w600,
+        ),
+        elevation: isSelected ? 4 : 2,
+        shadowColor: color.withOpacity(0.4),
+      ),
+    );
+  }
+
+  Widget _buildStatItem(IconData icon, String label, String value, Color color) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 28),
+        const SizedBox(height: 5),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: color,
           ),
-          child: Center(
-            child: Text(
-              title,
-              style: TextStyle(
-                color: isSelected ? Colors.blue : Colors.black87,
-                fontWeight: FontWeight.w600,
-              ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey.shade600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCustomerCard(Map<String, dynamic> item) {
+    final statusColor = _getStatusColor(item['statusText']);
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(15),
+          onTap: () => showCustomerPopup(item),
+          child: Padding(
+            padding: const EdgeInsets.all(15),
+            child: Row(
+              children: [
+                // Avatar
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [Colors.blue.shade400, Colors.purple.shade400],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: CircleAvatar(
+                    radius: 30,
+                    backgroundColor: Colors.transparent,
+                    backgroundImage: item['picUrlAvatarThumb'] != null
+                        ? NetworkImage(baseUrlImages + item['picUrlAvatarThumb'])
+                        : null,
+                    child: item['picUrlAvatarThumb'] == null
+                        ? const Icon(Icons.person, size: 30, color: Colors.white)
+                        : null,
+                  ),
+                ),
+                
+                const SizedBox(width: 15),
+                
+                // Info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${item['firstName'] ?? ''} ${item['lastName'] ?? ''}'.trim().isEmpty 
+                          ? 'No Name' 
+                          : '${item['firstName'] ?? ''} ${item['lastName'] ?? ''}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          Icon(Icons.phone, size: 14, color: Colors.grey.shade600),
+                          const SizedBox(width: 5),
+                          Text(
+                            item['phoneNumber']?.toString() ?? 'No Phone',
+                            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Icon(Icons.badge, size: 14, color: Colors.grey.shade600),
+                          const SizedBox(width: 5),
+                          Text(
+                            'Acc: ${item['accountNo']?.toString() ?? 'N/A'}',
+                            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                
+                // Status badge
+                Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: statusColor, width: 1.5),
+                      ),
+                      child: Text(
+                        item['statusText']?.toString() ?? 'N/A',
+                        style: TextStyle(
+                          color: statusColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Icon(Icons.chevron_right, color: Colors.grey.shade400),
+                  ],
+                ),
+              ],
             ),
           ),
         ),
