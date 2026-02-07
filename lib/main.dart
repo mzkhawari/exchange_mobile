@@ -34,6 +34,7 @@ class MyApp extends StatelessWidget {
 
   // Check both login status and redirect flag
   Future<Map<String, bool>> _checkAuthStatus() async {
+    await ApiService.validateRefreshTokenOnStartup();
     final isLoggedIn = await ApiService.isLoggedIn();
     final shouldRedirect = await ApiService.shouldRedirectToLogin();
     

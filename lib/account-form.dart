@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'settings_page.dart';
+import 'models/gender.dart';
 import 'services/api_service.dart';
+import 'models/identity_type.dart';
+import 'models/account_type.dart';
 
 class CustomerFormPage extends StatefulWidget {
   const CustomerFormPage({super.key});
@@ -21,14 +24,15 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
   final _mobileCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
+  final _cityNameCtrl = TextEditingController();
+  final _postalCodeCtrl = TextEditingController();
   final _identityNoCtrl = TextEditingController();
   final _passportStartDateCtrl = TextEditingController();
   final _passportExpiryDateCtrl = TextEditingController();
 
-  String? gender;
-  int? identityTypeId;
-  String? selectedIdentityTypeName;
-  int? accountTypeId;
+  Gender? gender;
+  IdentityType? identityType;
+  AccountType? accountType;
   int? countryId;
   int? provinceId;
   int? zoneId;
@@ -65,6 +69,17 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
     final identityTypes = await SettingsDataHelper.getIdentityTypes();
     final accountTypes = await SettingsDataHelper.getAccountTypes();
     
+    print('📊 Form Data Loaded:');
+    print('   Countries: ${countries.length} items');
+    print('   Provinces: ${provinces.length} items');
+    print('   Zones: ${zones.length} items');
+    print('   Identity Types: ${identityTypes.length} items');
+    print('   Account Types: ${accountTypes.length} items');
+    
+    if (countries.isNotEmpty) print('   Sample Country: ${countries.first}');
+    if (identityTypes.isNotEmpty) print('   Sample Identity Type: ${identityTypes.first}');
+    if (accountTypes.isNotEmpty) print('   Sample Account Type: ${accountTypes.first}');
+    
     setState(() {
       _countries = countries;
       _allProvinces = provinces;
@@ -72,40 +87,40 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
       _identityTypes = identityTypes;
       _accountTypes = accountTypes;
     });
+    
+    // نمایش پیام اخطار اگر داده‌ها خالی باشند
+    if (mounted && (countries.isEmpty || identityTypes.isEmpty || accountTypes.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ Some dropdown data is missing. Please sync data in Settings page.'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 5),
+        ),
+      );
+    }
   }
   
-  /// فیلتر کردن استان‌ها بر اساس کشور انتخاب شده
+  /// فیلتر کردن استان‌ها و زون‌ها بر اساس کشور انتخاب شده
   void _filterProvincesByCountry(int? selectedCountryId) {
     if (selectedCountryId == null) {
       setState(() {
         _filteredProvinces = [];
         _filteredZones = [];
+        provinceId = null;
+        zoneId = null;
       });
       return;
     }
     
     setState(() {
+      // فیلتر استان‌ها و زون‌های مربوط به کشور انتخاب شده
       _filteredProvinces = _allProvinces
           .where((p) => p['parentId'] == selectedCountryId)
           .toList();
       _filteredZones = _allZones
-          .where((z) => z['countryId'] == selectedCountryId)
+          .where((z) => z['parentId'] == selectedCountryId)
           .toList();
       provinceId = null;
-      zoneId = null;
-    });
-  }
-  
-  /// فیلتر کردن مناطق بر اساس استان انتخاب شده
-  void _filterZonesByProvince(int? selectedProvinceId) {
-    if (selectedProvinceId == null) {
-      return;
-    }
-    
-    setState(() {
-      _filteredZones = _filteredZones
-          .where((z) => z['parentId'] == selectedProvinceId)
-          .toList();
       zoneId = null;
     });
   }
@@ -157,7 +172,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
         return;
       }
 
-      final uri = Uri.parse("https://api1.katawazexchange.com/api/account/postAccountAttachment");
+      final uri = Uri.parse("https://10.0.2.2:7179/api/accountMob/postAccountAttachment");
 
       final request = http.MultipartRequest('POST', uri);
       request.headers['Authorization'] = 'Bearer $token';
@@ -166,12 +181,14 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
       request.fields.addAll({
         'firstName': _firstNameCtrl.text,
         'lastName': _lastNameCtrl.text,
-        'gender': gender ?? '',
-        'identityTypeId': identityTypeId?.toString() ?? '',
+        'gender': gender != null ? gender!.code.toString() : '',
+        'identityTypeId': identityType?.code.toString() ?? '',
         'identityNo': _identityNoCtrl.text,
-        'accountTypeId': accountTypeId?.toString() ?? '',
+        'accountTypeId': accountType?.code.toString() ?? '',
         'mobile': _mobileCtrl.text,
         'email': _emailCtrl.text,
+        'cityName': _cityNameCtrl.text,
+        'postalCode': _postalCodeCtrl.text,
         'address': _addressCtrl.text,
         'countryId': countryId?.toString() ?? '',
         'provinceId': provinceId?.toString() ?? '',
@@ -204,7 +221,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
         final respStr = await response.stream.bytesToString();
         final data = jsonDecode(respStr);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ Saved successfully: ${data['message'] ?? 'OK'}')),
+          SnackBar(content: Text('✅ Saved successfully: ${data==true ?? 'OK'}')),    //${data['message'] ?? 'OK'}')),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -243,16 +260,11 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
               
               _input(_firstNameCtrl, 'First Name', Icons.person),
               _input(_lastNameCtrl, 'Last Name', Icons.person_outline),
-              _dropdown('Gender', ['Male', 'Female'], (v) => gender = v, Icons.wc),
+              _genderDropdown(),
               _input(_mobileCtrl, 'Mobile Number', Icons.phone),
               _input(_emailCtrl, 'Email', Icons.email, required: false),
               
-              _dynamicDropdown(
-                'Account Type',
-                _accountTypes,
-                (id) => setState(() => accountTypeId = id),
-                Icons.account_balance,
-              ),
+              _accountTypeDropdown(),
               
               const SizedBox(height: 20),
               const Divider(),
@@ -264,29 +276,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
               ),
               const SizedBox(height: 12),
               
-              _dynamicDropdown(
-                'Identity Type',
-                _identityTypes,
-                (id) {
-                  setState(() {
-                    identityTypeId = id;
-                    // Check if selected identity type is passport
-                    final selected = _identityTypes.firstWhere(
-                      (item) => item['id'] == id,
-                      orElse: () => {},
-                    );
-                    selectedIdentityTypeName = selected['name']?.toString().toLowerCase() ?? '';
-                    _isPassport = selectedIdentityTypeName?.contains('passport') ?? false;
-                    
-                    // Clear passport fields if not passport
-                    if (!_isPassport) {
-                      _passportStartDateCtrl.clear();
-                      _passportExpiryDateCtrl.clear();
-                    }
-                  });
-                },
-                Icons.badge,
-              ),
+              _identityTypeDropdown(),
               
               _input(_identityNoCtrl, 'Identity Number', Icons.numbers),
               
@@ -324,23 +314,17 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
                 Icons.public,
               ),
               
-              _dynamicDropdown(
-                'Province',
-                _filteredProvinces,
-                (id) {
-                  setState(() => provinceId = id);
-                  _filterZonesByProvince(id);
-                },
-                Icons.location_city,
-                enabled: countryId != null,
-              ),
-              
-              _dynamicDropdown(
-                'Zone',
-                _filteredZones,
-                (id) => setState(() => zoneId = id),
-                Icons.location_on,
-                enabled: countryId != null,
+              _combinedProvinceZoneDropdown(),
+              Row(
+                children: [
+                  Expanded(
+                    child: _input(_cityNameCtrl, 'City', Icons.location_city, required: false),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _input(_postalCodeCtrl, 'Postal Code', Icons.local_post_office, required: false),
+                  ),
+                ],
               ),
               
               _input(_addressCtrl, 'Full Address', Icons.home, maxLines: 3),
@@ -441,6 +425,164 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
     );
   }
 
+  Widget _genderDropdown() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: DropdownButtonFormField<Gender>(
+        decoration: InputDecoration(
+          labelText: 'Gender',
+          prefixIcon: const Icon(Icons.wc),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          filled: true,
+          fillColor: Colors.grey[50],
+        ),
+        value: gender,
+        items: Gender.values
+            .map((g) => DropdownMenuItem<Gender>(
+                  value: g,
+                  child: Text(g.label),
+                ))
+            .toList(),
+        onChanged: (g) => setState(() => gender = g),
+        validator: (v) => v == null ? 'Please select Gender' : null,
+      ),
+    );
+  }
+
+  Widget _identityTypeDropdown() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: DropdownButtonFormField<IdentityType>(
+        decoration: InputDecoration(
+          labelText: 'Identity Type',
+          prefixIcon: const Icon(Icons.badge),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          filled: true,
+          fillColor: Colors.grey[50],
+        ),
+        value: identityType,
+        items: IdentityType.values
+            .map((t) => DropdownMenuItem<IdentityType>(
+                  value: t,
+                  child: Text(t.label),
+                ))
+            .toList(),
+        onChanged: (t) {
+          setState(() {
+            identityType = t;
+            _isPassport = identityType == IdentityType.passport;
+            if (!_isPassport) {
+              _passportStartDateCtrl.clear();
+              _passportExpiryDateCtrl.clear();
+            }
+          });
+        },
+        validator: (v) => v == null ? 'Please select Identity Type' : null,
+      ),
+    );
+  }
+
+  Widget _accountTypeDropdown() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: DropdownButtonFormField<AccountType>(
+        decoration: InputDecoration(
+          labelText: 'Account Type',
+          prefixIcon: const Icon(Icons.account_balance),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          filled: true,
+          fillColor: Colors.grey[50],
+        ),
+        value: accountType,
+        items: AccountType.values
+            .map((t) => DropdownMenuItem<AccountType>(
+                  value: t,
+                  child: Text(t.label),
+                ))
+            .toList(),
+        onChanged: (t) => setState(() => accountType = t),
+        validator: (v) => v == null ? 'Please select Account Type' : null,
+      ),
+    );
+  }
+
+  Widget _combinedProvinceZoneDropdown() {
+    // ترکیب استان‌ها و زون‌ها در یک لیست
+    final combinedList = <Map<String, dynamic>>[
+      ..._filteredProvinces.map((p) => {...p, 'type': 'province'}),
+      ..._filteredZones.map((z) => {...z, 'type': 'zone'}),
+    ];
+
+    // مقدار انتخاب شده را به عنوان String ذخیره می‌کنیم
+    String? selectedValue;
+    if (provinceId != null || zoneId != null) {
+      final id = provinceId ?? zoneId;
+      final item = combinedList.firstWhere(
+        (item) => item['id'] == id,
+        orElse: () => {},
+      );
+      if (item.isNotEmpty) {
+        selectedValue = '${item['id']}_${item['type']}';
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: DropdownButtonFormField<String>(
+        decoration: InputDecoration(
+          labelText: 'Province / Zone',
+          prefixIcon: const Icon(Icons.location_city),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          filled: true,
+          fillColor: countryId != null ? Colors.grey[50] : Colors.grey[200],
+          suffixIcon: combinedList.isEmpty
+              ? const Icon(Icons.warning, color: Colors.orange)
+              : null,
+        ),
+        value: selectedValue,
+        items: combinedList.isEmpty
+            ? null
+            : combinedList.map((item) {
+                final id = (item['id'] as num?)?.toInt();
+                final title = item['title']?.toString() ?? item['name']?.toString() ?? 'N/A';
+                final type = item['type'] == 'province' ? 'Province' : 'Zone';
+                final valueStr = '${id}_${item['type']}';
+                return DropdownMenuItem<String>(
+                  value: valueStr,
+                  child: Text('$title ($type)'),
+                );
+              }).where((e) => e.value != null).toList(),
+        onChanged: countryId != null && combinedList.isNotEmpty
+            ? (valueStr) {
+                if (valueStr != null) {
+                  final parts = valueStr.split('_');
+                  final id = int.tryParse(parts[0]);
+                  setState(() {
+                    // هر دو مقدار را ست می‌کنیم
+                    provinceId = id;
+                    zoneId = id;
+                  });
+                }
+              }
+            : null,
+        validator: (v) => v == null ? 'Please select Province / Zone' : null,
+        hint: combinedList.isEmpty
+            ? const Text('No data available - Please sync in Settings')
+            : countryId == null
+                ? const Text('First select Country')
+                : null,
+      ),
+    );
+  }
+
   Widget _dynamicDropdown(
     String label,
     List<Map<String, dynamic>> items,
@@ -466,11 +608,13 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
         items: items.isEmpty
             ? null
             : items.map((item) {
+                final value = (item['id'] as num?)?.toInt();
+                final label = item['title']?.toString() ?? item['name']?.toString() ?? 'N/A';
                 return DropdownMenuItem<int>(
-                  value: item['id'] as int,
-                  child: Text(item['title']?.toString() ?? 'N/A'),
+                  value: value,
+                  child: Text(label),
                 );
-              }).toList(),
+              }).where((e) => e.value != null).toList(),
         onChanged: enabled && items.isNotEmpty ? onChanged : null,
         validator: (v) => v == null ? 'Please select $label' : null,
         hint: items.isEmpty

@@ -6,11 +6,13 @@ import 'package:flutter/foundation.dart';
 
 class ApiService {
   // API Configuration for different environments
+  // Local API server for debugging
+  // Note: For Android emulator, use 10.0.2.2 instead of localhost
+  static const String _debugBaseUrl = 'https://10.0.2.2:7179/api';
+  static const String _debugImageUrl = 'https://10.0.2.2:7179';
   // Production API server
-  static const String _debugBaseUrl = 'https://api1.katawazexchange.com/api';
-  static const String _debugImageUrl = 'https://katawazexchange.com';
-  static const String _releaseBaseUrl = 'https://api1.katawazexchange.com/api';
-  static const String _releaseImageUrl = 'https://katawazexchange.com';
+  static const String _releaseBaseUrl = 'https://10.0.2.2:7179/api';
+  static const String _releaseImageUrl = 'https://10.0.2.2:7179';
   
   // Get current base URL based on build mode
   static String get baseUrl {
@@ -50,11 +52,24 @@ class ApiService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('auth_token', token);
   }
+
+  // Get stored refresh token
+  static Future<String?> getRefreshToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('refresh_token');
+  }
+
+  // Store refresh token
+  static Future<void> setRefreshToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('refresh_token', token);
+  }
   
   // Remove auth token
   static Future<void> removeAuthToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
+    await prefs.remove('refresh_token');
     await prefs.remove('user_data');
     await prefs.remove('login_response');
   }
@@ -66,6 +81,7 @@ class ApiService {
     // Clear all stored authentication data
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
+    await prefs.remove('refresh_token');
     await prefs.remove('user_data');
     await prefs.remove('login_response');
     
@@ -94,6 +110,34 @@ class ApiService {
     if (userDataString != null) {
       return json.decode(userDataString);
     }
+    return null;
+  }
+
+  // Get stored username (if available)
+  static Future<String?> getStoredUserName() async {
+    final userData = await getStoredUserData();
+    if (userData != null) {
+      return userData['userName']?.toString() ??
+          userData['username']?.toString() ??
+          userData['user_name']?.toString();
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final loginResponseString = prefs.getString('login_response');
+    if (loginResponseString != null) {
+      final loginData = json.decode(loginResponseString);
+      if (loginData is Map) {
+        if (loginData['userName'] != null) return loginData['userName'].toString();
+        if (loginData['username'] != null) return loginData['username'].toString();
+        if (loginData['currentUser'] is Map) {
+          final currentUser = loginData['currentUser'] as Map;
+          return currentUser['userName']?.toString() ??
+              currentUser['username']?.toString() ??
+              currentUser['user_name']?.toString();
+        }
+      }
+    }
+
     return null;
   }
   
@@ -227,8 +271,16 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['token'] != null) {
-          await setAuthToken(data['token']);
-          
+          final extractedAccessToken = _extractAccessToken(data['token']);
+          if (extractedAccessToken != null && extractedAccessToken.isNotEmpty) {
+            await setAuthToken(extractedAccessToken);
+          }
+
+          final extractedRefreshToken = _extractRefreshToken(data['token']);
+          if (extractedRefreshToken != null && extractedRefreshToken.isNotEmpty) {
+            await setRefreshToken(extractedRefreshToken);
+          }
+
           // Get user info immediately after login
           final userInfo = await getUserInfo();
           if (userInfo != null) {
@@ -246,6 +298,90 @@ class ApiService {
       print('Login error: $e');
       rethrow;
     }
+  }
+
+  // Validate refresh token on app startup
+  static Future<bool> validateRefreshTokenOnStartup() async {
+    try {
+      final refreshToken = await getRefreshToken();
+      if (refreshToken == null || refreshToken.isEmpty) {
+        return true; // No refresh token stored, skip validation
+      }
+
+      final accessToken = await getAuthToken();
+      final userName = await getStoredUserName();
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/refreshToken'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: json.encode({
+          'refreshToken': refreshToken,
+          'accessToken': accessToken,
+          'userName': userName,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        // Extract and update access token
+        String? accessToken;
+        if (data is Map && data['token'] != null) {
+          accessToken = _extractAccessToken(data['token']);
+        } else if (data is Map) {
+          accessToken = _extractAccessToken(data);
+        }
+
+        if (accessToken != null && accessToken.isNotEmpty) {
+          await setAuthToken(accessToken);
+        }
+
+        // Extract and update refresh token if returned
+        String? newRefreshToken;
+        if (data is Map && data['token'] != null) {
+          newRefreshToken = _extractRefreshToken(data['token']);
+        } else if (data is Map) {
+          newRefreshToken = _extractRefreshToken(data);
+        }
+
+        if (newRefreshToken != null && newRefreshToken.isNotEmpty) {
+          await setRefreshToken(newRefreshToken);
+        }
+
+        return true;
+      } else if (response.statusCode == 401) {
+        await handle401Unauthorized();
+        return false;
+      } else {
+        print('Refresh token validation failed: ${response.statusCode} - ${response.body}');
+        return false;
+      }
+    } catch (e) {
+      print('Error validating refresh token: $e');
+      return false;
+    }
+  }
+
+  static String? _extractAccessToken(dynamic tokenData) {
+    if (tokenData == null) return null;
+    if (tokenData is String) return tokenData;
+    if (tokenData is Map) {
+      if (tokenData['accessToken'] != null) return tokenData['accessToken'].toString();
+      if (tokenData['access_token'] != null) return tokenData['access_token'].toString();
+      if (tokenData['token'] != null) return tokenData['token'].toString();
+    }
+    return tokenData.toString();
+  }
+
+  static String? _extractRefreshToken(dynamic tokenData) {
+    if (tokenData == null) return null;
+    if (tokenData is Map) {
+      if (tokenData['refreshToken'] != null) return tokenData['refreshToken'].toString();
+      if (tokenData['refresh_token'] != null) return tokenData['refresh_token'].toString();
+    }
+    return null;
   }
   
   // Get chat messages (mock implementation - replace with actual endpoint)
@@ -579,7 +715,7 @@ class ApiService {
 
       print('📡 Fetching account select options from API...');
       final response = await http.get(
-        Uri.parse('$baseUrl/account/GetSelectOptions'),
+        Uri.parse('$baseUrl/accountMob/GetSelectOptions'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -617,7 +753,7 @@ class ApiService {
 
       print('📡 Fetching transfer cash select options from API...');
       final response = await http.get(
-        Uri.parse('$baseUrl/transfercash/GetSelectOptions'),
+        Uri.parse('$baseUrl/transfercashMob/GetSelectOptions'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -846,7 +982,10 @@ class ApiService {
   }
 
   /// Submit transfer cash data
-  static Future<Map<String, dynamic>?> postTransferCash(Map<String, dynamic> transferData) async {
+  static Future<Map<String, dynamic>?> postTransferCash(
+    Map<String, dynamic> transferData, {
+    List<String> attachmentPaths = const [],
+  }) async {
     try {
       final token = await getAuthToken();
       if (token == null || token.isEmpty) {
@@ -856,30 +995,52 @@ class ApiService {
 
       print('📡 Posting transfer cash to API...');
       print('📦 Transfer data: $transferData');
-      
-      final response = await http.post(
-        Uri.parse('$baseUrl/TransferCash/PostValue'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: json.encode(transferData),
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/transfercashMob/PostValue'),
       );
 
-      print('📬 Response status: ${response.statusCode}');
-      print('📬 Response body: ${response.body}');
+      request.headers['Authorization'] = 'Bearer $token';
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = json.decode(response.body);
+      // Send as form-data for [FromForm] binding
+      transferData.forEach((key, value) {
+        if (value == null) return;
+        if (value is DateTime) {
+          request.fields[key] = value.toIso8601String();
+        } else if (value is bool) {
+          request.fields[key] = value ? 'true' : 'false';
+        } else {
+          request.fields[key] = value.toString();
+        }
+      });
+
+      if (attachmentPaths.isNotEmpty) {
+        for (final path in attachmentPaths) {
+          if (path.isEmpty) continue;
+          request.files.add(
+            await http.MultipartFile.fromPath('attachments', path),
+          );
+        }
+      }
+
+      final streamedResponse = await request.send();
+      final responseBody = await streamedResponse.stream.bytesToString();
+
+      print('📬 Response status: ${streamedResponse.statusCode}');
+      print('📬 Response body: $responseBody');
+
+      if (streamedResponse.statusCode == 200 || streamedResponse.statusCode == 201) {
+        final data = json.decode(responseBody);
         print('✅ Transfer cash posted successfully');
         return data;
-      } else if (response.statusCode == 401) {
+      } else if (streamedResponse.statusCode == 401) {
         await handle401Unauthorized();
         print('🚨 Token expired while posting transfer cash');
         return null;
       } else {
-        print('❌ Failed to post transfer cash: ${response.statusCode}');
-        print('Response body: ${response.body}');
+        print('❌ Failed to post transfer cash: ${streamedResponse.statusCode}');
+        print('Response body: $responseBody');
         return null;
       }
     } catch (e) {
@@ -899,7 +1060,7 @@ class ApiService {
 
       print('📡 Fetching accounts from API...');
       final response = await http.post(
-        Uri.parse('$baseUrl/account/PostIncludeByPaging'),
+        Uri.parse('$baseUrl/accountMob/PostIncludeByPaging'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',

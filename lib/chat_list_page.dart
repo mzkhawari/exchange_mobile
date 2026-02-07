@@ -90,6 +90,7 @@ class _ChatListPageState extends State<ChatListPage> {
                       return url != null ? NetworkImage(url) : null;
                     }(),
                     child: () {
+                      
                       final url = ApiService.getFullAvatarUrl(avatarUrl);
                       return url == null
                           ? Text(

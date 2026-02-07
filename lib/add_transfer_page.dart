@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:dropdown_search/dropdown_search.dart';
+import 'package:file_picker/file_picker.dart';
 import 'settings_page.dart';
 import 'services/api_service.dart';
 
@@ -27,7 +29,7 @@ class _AddTransferPageState extends State<AddTransferPage> {
   final _senderMobileCtrl = TextEditingController();
   final _recipientFirstNameCtrl = TextEditingController();
   final _recipientLastNameCtrl = TextEditingController();
-  final _recipientEmailCtrl = TextEditingController();
+  final _recipientFatherNameCtrl = TextEditingController();
   final _recipientMobileCtrl = TextEditingController();
   
   // Dropdown values
@@ -38,8 +40,14 @@ class _AddTransferPageState extends State<AddTransferPage> {
   int? _commissionUnitId;
   int? _treasuryId;
   int? _senderId;
+
+  Map<String, dynamic>? _selectedSender;
   
   bool _isPayableFromAllBranches = false;
+
+  // Attachments
+  List<PlatformFile> _attachments = [];
+  bool _isPickingFile = false;
   
   // Data from settings
   List<Map<String, dynamic>> _transferTypes = [];
@@ -73,7 +81,7 @@ class _AddTransferPageState extends State<AddTransferPage> {
     _senderMobileCtrl.dispose();
     _recipientFirstNameCtrl.dispose();
     _recipientLastNameCtrl.dispose();
-    _recipientEmailCtrl.dispose();
+    _recipientFatherNameCtrl.dispose();
     _recipientMobileCtrl.dispose();
     super.dispose();
   }
@@ -82,7 +90,8 @@ class _AddTransferPageState extends State<AddTransferPage> {
     final transferTypes = await SettingsDataHelper.getTransferTypes();
     final branches = await SettingsDataHelper.getBranches();
     final currencies = await SettingsDataHelper.getCurrencies();
-    final paymentMethods = await SettingsDataHelper.getPaymentMethods();
+    final paymentMethods = await SettingsDataHelper.getBanks() ;// await SettingsDataHelper.getPaymentMethods();
+    
     
     setState(() {
       _transferTypes = transferTypes;
@@ -97,6 +106,27 @@ class _AddTransferPageState extends State<AddTransferPage> {
     setState(() {
       _customers = customers;
     });
+  }
+
+  String _getCustomerAccountNumber(Map<String, dynamic> customer) {
+    return customer['accountNumber']?.toString() ??
+        customer['accountNo']?.toString() ??
+        customer['account_no']?.toString() ??
+        '';
+  }
+
+  String _getCustomerPhone(Map<String, dynamic> customer) {
+    return customer['mobile']?.toString() ??
+        customer['mobileNo']?.toString() ??
+        customer['phoneNumber']?.toString() ??
+        customer['phone']?.toString() ??
+        '';
+  }
+
+  String? _getCustomerAvatar(Map<String, dynamic> customer) {
+    return customer['picUrlAvatarThumb']?.toString() ??
+        customer['picUrlAvatar']?.toString() ??
+        customer['avatar']?.toString();
   }
   
   void _calculatePayable() {
@@ -141,15 +171,23 @@ class _AddTransferPageState extends State<AddTransferPage> {
           'senderMobile': _senderMobileCtrl.text,
           'recipientFirstName': _recipientFirstNameCtrl.text,
           'recipientLastName': _recipientLastNameCtrl.text,
-          'recipientEmail': _recipientEmailCtrl.text,
+          'recipientFatherName': _recipientFatherNameCtrl.text,
           'recipientMobile': _recipientMobileCtrl.text,
         };
         
         // Remove null values
-        transferData.removeWhere((key, value) => value == null || value == '');
+        //transferData.removeWhere((key, value) => value == null || value == '');
         
         // Submit to API
-        final response = await ApiService.postTransferCash(transferData);
+        final attachmentPaths = _attachments
+            .where((f) => f.path != null && f.path!.isNotEmpty)
+            .map((f) => f.path!)
+            .toList();
+
+        final response = await ApiService.postTransferCash(
+          transferData,
+          attachmentPaths: attachmentPaths,
+        );
         
         if (response != null && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -180,6 +218,36 @@ class _AddTransferPageState extends State<AddTransferPage> {
         if (mounted) {
           setState(() => _isLoading = false);
         }
+      }
+    }
+  }
+
+  Future<void> _pickAttachments() async {
+    if (_isPickingFile) return;
+    setState(() => _isPickingFile = true);
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          _attachments = result.files;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ خطا در انتخاب فایل: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingFile = false);
       }
     }
   }
@@ -366,15 +434,20 @@ class _AddTransferPageState extends State<AddTransferPage> {
                           (c) => c['id'] == val,
                           orElse: () => {},
                         );
+                        _selectedSender = customer.isNotEmpty ? customer : null;
                         _senderFirstNameCtrl.text = customer['firstName']?.toString() ?? '';
                         _senderLastNameCtrl.text = customer['lastName']?.toString() ?? '';
-                        _senderAccountNumberCtrl.text = customer['accountNumber']?.toString() ?? '';
-                        _senderMobileCtrl.text = customer['mobile']?.toString() ?? '';
+                        _senderAccountNumberCtrl.text = _getCustomerAccountNumber(customer);
+                        _senderMobileCtrl.text = _getCustomerPhone(customer);
+                      } else {
+                        _selectedSender = null;
                       }
                     });
                   },
                   validator: (val) => val == null ? 'Required' : null,
                 ),
+                const SizedBox(height: 12),
+                _buildSelectedSenderInfo(),
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -451,9 +524,9 @@ class _AddTransferPageState extends State<AddTransferPage> {
                   children: [
                     Expanded(
                       child: _buildTextField(
-                        'Email',
-                        _recipientEmailCtrl,
-                        TextInputType.emailAddress,
+                        'Father Name',
+                        _recipientFatherNameCtrl,
+                        TextInputType.text,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -477,27 +550,71 @@ class _AddTransferPageState extends State<AddTransferPage> {
               Icons.attach_file,
               Colors.teal,
               [
-                Container(
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey[400]!),
-                  ),
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cloud_upload_outlined, size: 40, color: Colors.grey[600]),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Upload Attachments',
-                          style: TextStyle(color: Colors.grey[600]),
-                        ),
-                      ],
+                InkWell(
+                  onTap: _isPickingFile ? null : _pickAttachments,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    height: 120,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey[400]!),
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _isPickingFile ? Icons.hourglass_bottom : Icons.cloud_upload_outlined,
+                            size: 40,
+                            color: Colors.grey[600],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _isPickingFile ? 'Selecting files...' : 'Select Attachments',
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
+                if (_attachments.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Column(
+                    children: _attachments.map((file) {
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey[200]!),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.insert_drive_file, size: 20, color: Colors.blueGrey),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                file.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 18, color: Colors.redAccent),
+                              onPressed: () {
+                                setState(() {
+                                  _attachments = _attachments.where((f) => f != file).toList();
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
               ],
             ),
             
@@ -627,23 +744,29 @@ class _AddTransferPageState extends State<AddTransferPage> {
     Function(int?) onChanged, {
     String? Function(int?)? validator,
   }) {
-    return DropdownButtonFormField<int>(
-      value: value,
-      decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-      ),
-      items: items.map((item) {
-        return DropdownMenuItem<int>(
-          value: item['id'] as int,
-          child: Text(item['title']?.toString() ?? item['name']?.toString() ?? 'N/A'),
-        );
-      }).toList(),
+    final ids = items.map((item) => item['id'] as int).toList();
+    return DropdownSearch<int>(
+      items: ids,
+      selectedItem: value,
+      itemAsString: (id) {
+        final item = items.firstWhere((i) => i['id'] == id, orElse: () => {});
+        return item['title']?.toString() ?? item['name']?.toString() ?? 'N/A';
+      },
       onChanged: onChanged,
       validator: validator,
+      popupProps: const PopupProps.menu(
+        showSearchBox: true,
+        searchDelay: Duration(milliseconds: 100),
+      ),
+      dropdownDecoratorProps: DropDownDecoratorProps(
+        dropdownSearchDecoration: InputDecoration(
+          labelText: label,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        ),
+      ),
     );
   }
   
@@ -654,33 +777,154 @@ class _AddTransferPageState extends State<AddTransferPage> {
     Function(int?) onChanged, {
     String? Function(int?)? validator,
   }) {
-    return DropdownButtonFormField<int>(
-      value: value,
-      decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-      ),
-      isExpanded: true,
-      items: items.map((item) {
+    final ids = items.map((item) => item['id'] as int).toList();
+    return DropdownSearch<int>(
+      items: ids,
+      selectedItem: value,
+      itemAsString: (id) {
+        final item = items.firstWhere((i) => i['id'] == id, orElse: () => {});
         final firstName = item['firstName']?.toString() ?? '';
         final lastName = item['lastName']?.toString() ?? '';
-        final mobile = item['mobile']?.toString() ?? '';
-        final accountNumber = item['accountNumber']?.toString() ?? '';
-        final displayText = '$firstName $lastName${mobile.isNotEmpty ? ' - $mobile' : ''}${accountNumber.isNotEmpty ? ' (Acc: $accountNumber)' : ''}';
-        
-        return DropdownMenuItem<int>(
-          value: item['id'] as int,
-          child: Text(
-            displayText,
-            overflow: TextOverflow.ellipsis,
-          ),
-        );
-      }).toList(),
+        final mobile = _getCustomerPhone(item);
+        final accountNumber = _getCustomerAccountNumber(item);
+        return '$firstName $lastName${mobile.isNotEmpty ? ' - $mobile' : ''}${accountNumber.isNotEmpty ? ' (Acc: $accountNumber)' : ''}'.trim();
+      },
       onChanged: onChanged,
       validator: validator,
+      popupProps: PopupProps.menu(
+        showSearchBox: true,
+        searchDelay: const Duration(milliseconds: 100),
+        itemBuilder: (context, id, isSelected) {
+          final item = items.firstWhere((i) => i['id'] == id, orElse: () => {});
+          final firstName = item['firstName']?.toString() ?? '';
+          final lastName = item['lastName']?.toString() ?? '';
+          final mobile = _getCustomerPhone(item);
+          final accountNumber = _getCustomerAccountNumber(item);
+          final avatarPath = _getCustomerAvatar(item);
+          final avatarUrl = ApiService.getFullAvatarUrl(avatarPath ?? '');
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            color: isSelected ? Colors.blue[50] : Colors.transparent,
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: Colors.grey[200],
+                  backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                      ? NetworkImage(avatarUrl)
+                      : null,
+                  child: (avatarUrl == null || avatarUrl.isEmpty)
+                      ? Text(
+                          (firstName.isNotEmpty ? firstName[0] : 'U').toUpperCase(),
+                          style: const TextStyle(fontSize: 12, color: Colors.black54),
+                        )
+                      : null,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$firstName $lastName'.trim().isEmpty ? 'Unnamed' : '$firstName $lastName'.trim(),
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                      if (mobile.isNotEmpty)
+                        Text(
+                          mobile,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                        ),
+                      if (accountNumber.isNotEmpty)
+                        Text(
+                          'Acc: $accountNumber',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+      dropdownDecoratorProps: DropDownDecoratorProps(
+        dropdownSearchDecoration: InputDecoration(
+          labelText: label,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectedSenderInfo() {
+    if (_selectedSender == null) {
+      return const SizedBox.shrink();
+    }
+
+    final firstName = _selectedSender?['firstName']?.toString() ?? '';
+    final lastName = _selectedSender?['lastName']?.toString() ?? '';
+    final mobile = _getCustomerPhone(_selectedSender!);
+    final accountNumber = _getCustomerAccountNumber(_selectedSender!);
+    final avatarPath = _getCustomerAvatar(_selectedSender!);
+    final avatarUrl = ApiService.getFullAvatarUrl(avatarPath ?? '');
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: Colors.grey[200],
+            backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                ? NetworkImage(avatarUrl)
+                : null,
+            child: (avatarUrl == null || avatarUrl.isEmpty)
+                ? Text(
+                    (firstName.isNotEmpty ? firstName[0] : 'U').toUpperCase(),
+                    style: const TextStyle(fontSize: 14, color: Colors.black54),
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$firstName $lastName'.trim().isEmpty ? 'Unnamed' : '$firstName $lastName'.trim(),
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (mobile.isNotEmpty)
+                  Text(
+                    mobile,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                if (accountNumber.isNotEmpty)
+                  Text(
+                    'Acc: $accountNumber',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

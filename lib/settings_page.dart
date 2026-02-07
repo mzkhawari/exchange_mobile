@@ -149,12 +149,17 @@ class _SettingsPageState extends State<SettingsPage> {
       if (transferData != null) {
         if (transferData.containsKey('currencies') && transferData['currencies'] != null) {
           await prefs.setString('settings_currencies', jsonEncode(transferData['currencies']));
-          print('✅ Currencies saved: ${(transferData['currencies'] as List).length} items');
+          print('✅ currencies saved: ${(transferData['currencies'] as List).length} items');
         }
         
         if (transferData.containsKey('banks') && transferData['banks'] != null) {
           await prefs.setString('settings_banks', jsonEncode(transferData['banks']));
           print('✅ Banks saved: ${(transferData['banks'] as List).length} items');
+        }
+
+        if (transferData.containsKey('transfer_types') && transferData['transfer_types'] != null) {
+          await prefs.setString('settings_transfer_types', jsonEncode(transferData['transfer_types']));
+          print('✅ Transfer Types saved: ${(transferData['transfer_types'] as List).length} items');
         }
         
         if (transferData.containsKey('paymentMethods') && transferData['paymentMethods'] != null) {
@@ -215,10 +220,7 @@ class _SettingsPageState extends State<SettingsPage> {
           print('✅ Account Types saved: ${(accountData['accountTypes'] as List).length} items');
         }
         
-        if (accountData.containsKey('transferTypes') && accountData['transferTypes'] != null) {
-          await prefs.setString('settings_transfer_types', jsonEncode(accountData['transferTypes']));
-          print('✅ Transfer Types saved: ${(accountData['transferTypes'] as List).length} items');
-        }
+        
       }
       
       await prefs.setString('settings_last_sync', DateTime.now().toIso8601String());
@@ -405,14 +407,18 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.remove('settings_provinces');
       await prefs.remove('settings_zones');
       await prefs.remove('settings_cities');
+
       await prefs.remove('settings_currencies');
       await prefs.remove('settings_branches');
-      await prefs.remove('settings_identity_types');
-      await prefs.remove('settings_account_types');
       await prefs.remove('settings_transfer_types');
-      await prefs.remove('settings_payment_methods');
       await prefs.remove('settings_banks');
+      
+      await prefs.remove('settings_account_types');
+      await prefs.remove('settings_identity_types');
+      
+      
       await prefs.remove('settings_exchange_rates');
+      await prefs.remove('settings_payment_methods');
       await prefs.remove('settings_last_sync');
       
       await _loadCachedData();
@@ -761,12 +767,19 @@ class _SettingsPageState extends State<SettingsPage> {
       color: Colors.transparent,
       child: InkWell(
         onTap: isEmpty ? null : () {
-          showModalBottomSheet(
-            context: context,
-            isScrollControlled: true,
-            backgroundColor: Colors.transparent,
-            builder: (context) => _buildDataDetailsSheet(title, data, icon, color),
-          );
+          // Special handling for Provinces and Zones - show filterable by country
+          if (title == 'Zones') {
+            _showZonesWithCountryFilter();
+          } else if (title == 'Provinces') {
+            _showProvincesWithCountryFilter();
+          } else {
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.transparent,
+              builder: (context) => _buildDataDetailsSheet(title, data, icon, color),
+            );
+          }
         },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -973,6 +986,479 @@ class _SettingsPageState extends State<SettingsPage> {
       return '${dateTime.year}/${dateTime.month}/${dateTime.day} - ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
     }
   }
+
+  void _showZonesWithCountryFilter() {
+    int? selectedCountryId;
+    List<Map<String, dynamic>> filteredZones = _zones;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return DraggableScrollableSheet(
+            initialChildSize: 0.8,
+            minChildSize: 0.5,
+            maxChildSize: 0.95,
+            builder: (context, scrollController) {
+              return Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Column(
+                  children: [
+                    // Handle
+                    Container(
+                      margin: const EdgeInsets.only(top: 12, bottom: 8),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    // Header
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.green[600]!, Colors.green[400]!],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.map, color: Colors.white, size: 28),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Zones',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${filteredZones.length} Items',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.white),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Country Filter Dropdown
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.green[50],
+                        border: Border(
+                          bottom: BorderSide(color: Colors.green[200]!, width: 1),
+                        ),
+                      ),
+                      child: DropdownButtonFormField<int>(
+                        decoration: InputDecoration(
+                          labelText: 'Filter by Country',
+                          prefixIcon: const Icon(Icons.public),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                        ),
+                        value: selectedCountryId,
+                        hint: const Text('All Countries'),
+                        items: [
+                          const DropdownMenuItem<int>(
+                            value: null,
+                            child: Text('All Countries'),
+                          ),
+                          ..._countries.map((country) {
+                            return DropdownMenuItem<int>(
+                              value: country['id'] as int?,
+                              child: Text(country['title']?.toString() ?? 'N/A'),
+                            );
+                          }).toList(),
+                        ],
+                        onChanged: (value) {
+                          setModalState(() {
+                            selectedCountryId = value;
+                            if (value == null) {
+                              filteredZones = _zones;
+                            } else {
+                              filteredZones = _zones
+                                  .where((zone) => zone['parentId'] == value)
+                                  .toList();
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                    // Zones List
+                    Expanded(
+                      child: filteredZones.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.inbox_outlined, size: 64, color: Colors.grey[400]),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No zones found',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : ListView.builder(
+                              controller: scrollController,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              itemCount: filteredZones.length,
+                              itemBuilder: (context, index) {
+                                final zone = filteredZones[index];
+                                final countryName = _countries
+                                    .firstWhere(
+                                      (c) => c['id'] == zone['parentId'],
+                                      orElse: () => {'title': 'Unknown'},
+                                    )['title']
+                                    ?.toString();
+
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: Colors.green.withOpacity(0.1),
+                                    child: Text(
+                                      '${index + 1}',
+                                      style: TextStyle(
+                                        color: Colors.green[700],
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    zone['title']?.toString() ?? zone['name']?.toString() ?? 'N/A',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (countryName != null)
+                                        Text(
+                                          '🌍 $countryName',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.green[700],
+                                          ),
+                                        ),
+                                      if (zone['description'] != null)
+                                        Text(
+                                          zone['description'].toString(),
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  trailing: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: zone['isActive'] == true || zone['isActive'] == 1
+                                          ? Colors.green[100]
+                                          : Colors.grey[200],
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      zone['isActive'] == true || zone['isActive'] == 1 ? 'Active' : 'Inactive',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: zone['isActive'] == true || zone['isActive'] == 1
+                                            ? Colors.green[700]
+                                            : Colors.grey[600],
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  void _showProvincesWithCountryFilter() {
+    int? selectedCountryId;
+    List<Map<String, dynamic>> filteredProvinces = _provinces;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return DraggableScrollableSheet(
+            initialChildSize: 0.8,
+            minChildSize: 0.5,
+            maxChildSize: 0.95,
+            builder: (context, scrollController) {
+              return Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Column(
+                  children: [
+                    // Handle
+                    Container(
+                      margin: const EdgeInsets.only(top: 12, bottom: 8),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    // Header
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.green[600]!, Colors.green[400]!],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.location_city, color: Colors.white, size: 28),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Provinces',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${filteredProvinces.length} Items',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.white),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Country Filter Dropdown
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.green[50],
+                        border: Border(
+                          bottom: BorderSide(color: Colors.green[200]!, width: 1),
+                        ),
+                      ),
+                      child: DropdownButtonFormField<int>(
+                        decoration: InputDecoration(
+                          labelText: 'Filter by Country',
+                          prefixIcon: const Icon(Icons.public),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                        ),
+                        value: selectedCountryId,
+                        hint: const Text('All Countries'),
+                        items: [
+                          const DropdownMenuItem<int>(
+                            value: null,
+                            child: Text('All Countries'),
+                          ),
+                          ..._countries.map((country) {
+                            return DropdownMenuItem<int>(
+                              value: country['id'] as int?,
+                              child: Text(country['title']?.toString() ?? 'N/A'),
+                            );
+                          }).toList(),
+                        ],
+                        onChanged: (value) {
+                          setModalState(() {
+                            selectedCountryId = value;
+                            if (value == null) {
+                              filteredProvinces = _provinces;
+                            } else {
+                              filteredProvinces = _provinces
+                                  .where((province) => province['parentId'] == value)
+                                  .toList();
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                    // Provinces List
+                    Expanded(
+                      child: filteredProvinces.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.inbox_outlined, size: 64, color: Colors.grey[400]),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No provinces found',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : ListView.builder(
+                              controller: scrollController,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              itemCount: filteredProvinces.length,
+                              itemBuilder: (context, index) {
+                                final province = filteredProvinces[index];
+                                final countryName = _countries
+                                    .firstWhere(
+                                      (c) => c['id'] == province['parentId'],
+                                      orElse: () => {'title': 'Unknown'},
+                                    )['title']
+                                    ?.toString();
+
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: Colors.green.withOpacity(0.1),
+                                    child: Text(
+                                      '${index + 1}',
+                                      style: TextStyle(
+                                        color: Colors.green[700],
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    province['title']?.toString() ?? province['name']?.toString() ?? 'N/A',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (countryName != null)
+                                        Text(
+                                          '🌍 $countryName',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.green[700],
+                                          ),
+                                        ),
+                                      if (province['description'] != null)
+                                        Text(
+                                          province['description'].toString(),
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  trailing: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: province['isActive'] == true || province['isActive'] == 1
+                                          ? Colors.green[100]
+                                          : Colors.grey[200],
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      province['isActive'] == true || province['isActive'] == 1 ? 'Active' : 'Inactive',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: province['isActive'] == true || province['isActive'] == 1
+                                            ? Colors.green[700]
+                                            : Colors.grey[600],
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
 }
 
 /// کلاس Helper برای دسترسی آسان به داده‌های تنظیمات از سایر صفحات

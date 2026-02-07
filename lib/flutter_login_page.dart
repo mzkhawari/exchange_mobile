@@ -25,7 +25,7 @@ class _LoginPageState extends State<LoginPage> {
       _errorMessage = null;
     });
 
-    final url = Uri.parse('https://api1.katawazexchange.com/api/auth/login');
+    final url = Uri.parse('https://10.0.2.2:7179/api/auth/login');
     final body = {
       'UserName': _usernameController.text,
       'Password': _passwordController.text,
@@ -45,22 +45,32 @@ class _LoginPageState extends State<LoginPage> {
       
         // Check if we received a token
         String? token;
+        String? refreshToken;
         if (data['token'] != null) {
           // Handle both string token and object token
           if (data['token'] is String) {
             token = data['token'];
           } else if (data['token'] is Map && data['token']['accessToken'] != null) {
             token = data['token']['accessToken'];
+            refreshToken = data['token']['refreshToken']?.toString();
           } else if (data['token'] is Map && data['token']['access_token'] != null) {
             token = data['token']['access_token'];
+            refreshToken = data['token']['refresh_token']?.toString();
           } else {
             token = data['token'].toString();
           }
         }
+
+        refreshToken ??= data['refreshToken']?.toString();
+        refreshToken ??= data['refresh_token']?.toString();
         
         if (token != null && token.isNotEmpty) {
           // Save the token using ApiService
           await ApiService.setAuthToken(token);
+
+          if (refreshToken != null && refreshToken!.isNotEmpty) {
+            await ApiService.setRefreshToken(refreshToken!);
+          }
           
           // Save login response data first
           final prefs = await SharedPreferences.getInstance();
