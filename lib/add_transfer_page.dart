@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dropdown_search/dropdown_search.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'settings_page.dart';
 import 'services/api_service.dart';
 
@@ -48,6 +48,8 @@ class _AddTransferPageState extends State<AddTransferPage> {
   // Attachments
   List<PlatformFile> _attachments = [];
   bool _isPickingFile = false;
+  final ImagePicker _imagePicker = ImagePicker();
+  bool _isTakingPhoto = false;
   
   // Data from settings
   List<Map<String, dynamic>> _transferTypes = [];
@@ -232,8 +234,17 @@ class _AddTransferPageState extends State<AddTransferPage> {
       );
 
       if (result != null && result.files.isNotEmpty) {
+        final existing = List<PlatformFile>.from(_attachments);
+        final existingKeys = existing
+            .map((file) => (file.path?.isNotEmpty ?? false) ? file.path! : file.name)
+            .toSet();
+        final incoming = result.files.where((file) {
+          final key = (file.path?.isNotEmpty ?? false) ? file.path! : file.name;
+          return !existingKeys.contains(key);
+        });
+
         setState(() {
-          _attachments = result.files;
+          _attachments = [...existing, ...incoming];
         });
       }
     } catch (e) {
@@ -251,9 +262,47 @@ class _AddTransferPageState extends State<AddTransferPage> {
       }
     }
   }
+
+  Future<void> _takePhotoAttachment() async {
+    if (_isTakingPhoto) return;
+    setState(() => _isTakingPhoto = true);
+
+    try {
+      // Request camera permission
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Camera permission denied')),
+          );
+        }
+        return;
+      }
+
+      final XFile? photo = await _imagePicker.pickImage(source: ImageSource.camera, imageQuality: 80);
+      if (photo != null) {
+        // Convert XFile to PlatformFile-like object by creating a PlatformFile with path
+        final file = PlatformFile(name: photo.name, path: photo.path, size: await photo.length());
+        setState(() {
+          _attachments = List.from(_attachments)..add(file);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ Error taking photo: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isTakingPhoto = false);
+    }
+  }
+
   
   @override
   Widget build(BuildContext context) {
+    final isBusy = _isPickingFile || _isTakingPhoto;
+
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
@@ -550,33 +599,51 @@ class _AddTransferPageState extends State<AddTransferPage> {
               Icons.attach_file,
               Colors.teal,
               [
-                InkWell(
-                  onTap: _isPickingFile ? null : _pickAttachments,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    height: 120,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey[400]!),
-                    ),
-                    child: Center(
-                      child: Column(
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey[400]!),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: isBusy ? null : _pickAttachments,
+                              icon: const Icon(Icons.attach_file),
+                              label: const Text('Select file'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: isBusy ? null : _takePhotoAttachment,
+                              icon: const Icon(Icons.camera_alt),
+                              label: const Text('Take photo'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            _isPickingFile ? Icons.hourglass_bottom : Icons.cloud_upload_outlined,
-                            size: 40,
+                            isBusy ? Icons.hourglass_bottom : Icons.info_outline,
+                            size: 18,
                             color: Colors.grey[600],
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(width: 6),
                           Text(
-                            _isPickingFile ? 'Selecting files...' : 'Select Attachments',
+                            isBusy ? 'Please wait...' : 'You can add multiple attachments',
                             style: TextStyle(color: Colors.grey[600]),
                           ),
                         ],
                       ),
-                    ),
+                    ],
                   ),
                 ),
                 if (_attachments.isNotEmpty) ...[

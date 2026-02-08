@@ -25,6 +25,7 @@ dependencies:
   crypto: ^3.0.3
   dropdown_search: ^5.0.6
   file_picker: ^8.1.2
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:

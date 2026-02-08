@@ -32,6 +32,8 @@ void main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
   // Check both login status and redirect flag
   Future<Map<String, bool>> _checkAuthStatus() async {
     await ApiService.validateRefreshTokenOnStartup();
@@ -46,9 +48,19 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    ApiService.onUnauthorized ??= () {
+      final navigator = navigatorKey.currentState;
+      if (navigator == null) return;
+      navigator.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+        (route) => false,
+      );
+    };
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Katawaz Exchange',
+      navigatorKey: navigatorKey,
       home: FutureBuilder<Map<String, bool>>(
         future: _checkAuthStatus(),
         builder: (context, snapshot) {

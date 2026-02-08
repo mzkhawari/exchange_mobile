@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 
 class ApiService {
+  // Hook to trigger navigation when auth is invalid.
+  static VoidCallback? onUnauthorized;
   // API Configuration for different environments
   // Local API server for debugging
   // Note: For Android emulator, use 10.0.2.2 instead of localhost
@@ -91,6 +93,10 @@ class ApiService {
     await prefs.setBool('should_redirect_to_login', true);
     
     print('🔄 Login redirect flag set');
+
+    if (onUnauthorized != null) {
+      onUnauthorized!();
+    }
   }
 
   // Check if should redirect to login (for use in app initialization)
@@ -351,7 +357,7 @@ class ApiService {
         }
 
         return true;
-      } else if (response.statusCode == 401) {
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
         await handle401Unauthorized();
         return false;
       } else {
