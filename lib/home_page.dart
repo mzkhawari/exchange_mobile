@@ -75,10 +75,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _currentShift() {
-    debugPrint('Current Shift pressed');
-  }
-
   void _openChatroom(BuildContext context) {
     Navigator.push(
       context,
@@ -297,13 +293,6 @@ class _HomePageState extends State<HomePage> {
         icon: Icons.add_task,
         color: Colors.green,
         onTap: () => _addTransaction(context),
-      ),
-      _DashboardAction(
-        title: 'Current Shift',
-        subtitle: 'Shift status',
-        icon: Icons.timer_outlined,
-        color: Colors.blueGrey,
-        onTap: _currentShift,
       ),
       _DashboardAction(
         title: 'Chat Room',
