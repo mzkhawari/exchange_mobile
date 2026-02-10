@@ -61,9 +61,15 @@ class _ChatroomPageState extends State<ChatroomPage> {
       _chatMasterId = widget.initialUser!['id'] as int?;
     }
     
-    _loadUserData().then((_) {
+    _loadUserData().then((_) async {
       // Always load available users, regardless of authentication status
-      _loadAvailableUsers();
+      await _loadAvailableUsers();
+
+      // If a chat partner is already selected, refresh messages on page open
+      if (_selectedUser != null) {
+        await _loadChatMessages();
+        _markAllMessagesAsSeen();
+      }
     });
     
     // Add listener to message controller to update send button
