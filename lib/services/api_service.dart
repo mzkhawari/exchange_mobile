@@ -9,12 +9,12 @@ class ApiService {
   static VoidCallback? onUnauthorized;
   // API Configuration for different environments
   // Local API server for debugging
-  // Note: For Android emulator, use 10.0.2.2 instead of localhost
-  static const String _debugBaseUrl = 'https://10.0.2.2:7179/api';
-  static const String _debugImageUrl = 'https://10.0.2.2:7179';
+  // Note: For Android emulator, use 209.42.25.31 instead of localhost
+  static const String _debugBaseUrl = 'https://209.42.25.31:7179/api';
+  static const String _debugImageUrl = 'https://209.42.25.31:7179';
   // Production API server
-  static const String _releaseBaseUrl = 'https://10.0.2.2:7179/api';
-  static const String _releaseImageUrl = 'https://10.0.2.2:7179';
+  static const String _releaseBaseUrl = 'https://209.42.25.31:7179/api';
+  static const String _releaseImageUrl = 'https://209.42.25.31:7179';
   
   // Get current base URL based on build mode
   static String get baseUrl {
@@ -38,9 +38,9 @@ class ApiService {
   
   // Initialize and log current configuration
   static void logCurrentConfig() {
-    print('🌍 API Environment: ${currentEnvironment}');
-    print('🔗 Base URL: ${baseUrl}');
-    print('🖼️ Image URL: ${baseImageUrl}');
+    print('🌍 API Environment: $currentEnvironment');
+    print('🔗 Base URL: $baseUrl');
+    print('🖼️ Image URL: $baseImageUrl');
   }
   
   // Get stored auth token
@@ -257,10 +257,10 @@ class ApiService {
   // Login method
   static Future<Map<String, dynamic>?> login(String username, String password, {bool isRemember = false}) async {
     try {
-      print('🔐 LOGIN DEBUG: Environment = ${currentEnvironment}');
+      print('🔐 LOGIN DEBUG: Environment = $currentEnvironment');
       print('🔐 LOGIN DEBUG: baseUrl = $baseUrl');
       print('🔐 LOGIN DEBUG: Full login URL = $baseUrl/auth/login');
-      print('🔐 LOGIN DEBUG: kDebugMode = ${kDebugMode}');
+      print('🔐 LOGIN DEBUG: kDebugMode = $kDebugMode');
       
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'),

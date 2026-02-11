@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'settings_page.dart';
 
 class CustomerListPage extends StatefulWidget {
   const CustomerListPage({super.key});
@@ -12,7 +11,7 @@ class CustomerListPage extends StatefulWidget {
 }
 
 class _CustomerListPageState extends State<CustomerListPage> {
-  final Dio dio = Dio(BaseOptions(baseUrl: "https://10.0.2.2:7179/api"));
+  final Dio dio = Dio(BaseOptions(baseUrl: "https://209.42.25.31:7179/api"));
 
   int selectedStatus = 0; // 0=all, 1=awaiting, 2=confirmed
   int currentPage = 1;

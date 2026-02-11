@@ -12,7 +12,6 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   bool _isLoading = false;
-  Map<String, dynamic> _settingsData = {};
   
   // API Data Storage
   List<Map<String, dynamic>> _countries = [];
@@ -93,7 +92,6 @@ class _SettingsPageState extends State<SettingsPage> {
       final countriesData = await ApiService.getCountries();
       final provincesData = await ApiService.getProvinces();
       final zonesData = await ApiService.getZones();
-      final citiesData = <Map<String, dynamic>>[]; // Empty placeholder
       
       if (countriesData.isNotEmpty) {
         await prefs.setString('settings_countries', jsonEncode(countriesData));
@@ -1090,7 +1088,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           filled: true,
                           fillColor: Colors.white,
                         ),
-                        value: selectedCountryId,
+                        initialValue: selectedCountryId,
                         hint: const Text('All Countries'),
                         items: [
                           const DropdownMenuItem<int>(
@@ -1102,7 +1100,7 @@ class _SettingsPageState extends State<SettingsPage> {
                               value: country['id'] as int?,
                               child: Text(country['title']?.toString() ?? 'N/A'),
                             );
-                          }).toList(),
+                          }),
                         ],
                         onChanged: (value) {
                           setModalState(() {
@@ -1326,7 +1324,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           filled: true,
                           fillColor: Colors.white,
                         ),
-                        value: selectedCountryId,
+                        initialValue: selectedCountryId,
                         hint: const Text('All Countries'),
                         items: [
                           const DropdownMenuItem<int>(
@@ -1338,7 +1336,7 @@ class _SettingsPageState extends State<SettingsPage> {
                               value: country['id'] as int?,
                               child: Text(country['title']?.toString() ?? 'N/A'),
                             );
-                          }).toList(),
+                          }),
                         ],
                         onChanged: (value) {
                           setModalState(() {

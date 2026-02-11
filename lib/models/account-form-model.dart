@@ -1,5 +1,51 @@
 class CustomerModel {
-  // ... فیلدهای قبلی
+  final int id;
+  final int accountNo;
+  final String branchTitle;
+  final int accountTypeId;
+  final String createDateFa;
+  final int identityTypeId;
+  final String identityNo;
+  final String identityDescription;
+  final String firstName;
+  final String lastName;
+  final int gender;
+  final String mobileNo;
+  final String email;
+  final String description;
+  final int countryId;
+  final int zoneId;
+  final int provinceId;
+  final String cityName;
+  final String address;
+  final String postalCode;
+  final int accountStatus;
+  final String branchId;
+
+  const CustomerModel({
+    required this.id,
+    required this.accountNo,
+    required this.branchTitle,
+    required this.accountTypeId,
+    required this.createDateFa,
+    required this.identityTypeId,
+    required this.identityNo,
+    required this.identityDescription,
+    required this.firstName,
+    required this.lastName,
+    required this.gender,
+    required this.mobileNo,
+    required this.email,
+    required this.description,
+    required this.countryId,
+    required this.zoneId,
+    required this.provinceId,
+    required this.cityName,
+    required this.address,
+    required this.postalCode,
+    required this.accountStatus,
+    required this.branchId,
+  });
   
   Map<String, dynamic> toJson() {
     return {

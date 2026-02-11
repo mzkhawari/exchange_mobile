@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'services/api_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -10,7 +9,7 @@ void main() async {
   // First test connectivity
   //await ApiService.testConnectivity();
   
-  print('\n' + '=' * 50);
+  print('\n${'=' * 50}');
   
   // Then run full API test suite
   //await ApiService.testAllApiEndpoints();

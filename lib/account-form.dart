@@ -48,8 +48,6 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
   List<Map<String, dynamic>> _countries = [];
   List<Map<String, dynamic>> _allProvinces = [];
   List<Map<String, dynamic>> _allZones = [];
-  List<Map<String, dynamic>> _identityTypes = [];
-  List<Map<String, dynamic>> _accountTypes = [];
   
   // لیست‌های فیلتر شده
   List<Map<String, dynamic>> _filteredProvinces = [];
@@ -84,8 +82,6 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
       _countries = countries;
       _allProvinces = provinces;
       _allZones = zones;
-      _identityTypes = identityTypes;
-      _accountTypes = accountTypes;
     });
     
     // نمایش پیام اخطار اگر داده‌ها خالی باشند
@@ -172,7 +168,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
         return;
       }
 
-      final uri = Uri.parse("https://10.0.2.2:7179/api/accountMob/postAccountAttachment");
+      final uri = Uri.parse("https://209.42.25.31:7179/api/accountMob/postAccountAttachment");
 
       final request = http.MultipartRequest('POST', uri);
       request.headers['Authorization'] = 'Bearer $token';
@@ -220,8 +216,11 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
       if (response.statusCode == 200) {
         final respStr = await response.stream.bytesToString();
         final data = jsonDecode(respStr);
+        final message = data is Map && data['message'] != null
+            ? data['message'].toString()
+            : (data == true ? 'OK' : 'OK');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ Saved successfully: ${data==true ?? 'OK'}')),    //${data['message'] ?? 'OK'}')),
+          SnackBar(content: Text('✅ Saved successfully: $message')),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -400,31 +399,6 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
     );
   }
 
-  Widget _dropdown(
-    String label,
-    List<String> items,
-    Function(String?) onChanged,
-    IconData icon,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: DropdownButtonFormField<String>(
-        decoration: InputDecoration(
-          labelText: label,
-          prefixIcon: Icon(icon),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          filled: true,
-          fillColor: Colors.grey[50],
-        ),
-        items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-        onChanged: onChanged,
-        validator: (v) => v == null ? 'Please select $label' : null,
-      ),
-    );
-  }
-
   Widget _genderDropdown() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -438,7 +412,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
           filled: true,
           fillColor: Colors.grey[50],
         ),
-        value: gender,
+        initialValue: gender,
         items: Gender.values
             .map((g) => DropdownMenuItem<Gender>(
                   value: g,
@@ -464,7 +438,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
           filled: true,
           fillColor: Colors.grey[50],
         ),
-        value: identityType,
+        initialValue: identityType,
         items: IdentityType.values
             .map((t) => DropdownMenuItem<IdentityType>(
                   value: t,
@@ -499,7 +473,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
           filled: true,
           fillColor: Colors.grey[50],
         ),
-        value: accountType,
+        initialValue: accountType,
         items: AccountType.values
             .map((t) => DropdownMenuItem<AccountType>(
                   value: t,
@@ -547,7 +521,7 @@ class _CustomerFormPageState extends State<CustomerFormPage> {
               ? const Icon(Icons.warning, color: Colors.orange)
               : null,
         ),
-        value: selectedValue,
+        initialValue: selectedValue,
         items: combinedList.isEmpty
             ? null
             : combinedList.map((item) {

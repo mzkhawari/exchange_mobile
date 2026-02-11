@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'services/api_service.dart';
 import 'services/voice_recorder_service.dart';
 import 'services/file_cache_service.dart';
+import 'services/pending_chat_queue_service.dart';
 
 class ChatroomPage extends StatefulWidget {
   final Map<String, dynamic>? initialUser;
@@ -29,17 +30,14 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Map<String, dynamic>? _selectedUser;
   List<Map<String, dynamic>> _availableUsers = [];
   bool _isLoadingUsers = true;
-  bool _showPicturesOnly = true; // Start with pictures only (primary state)
   bool _isExpanded = false; // Track if left sidebar is expanded
   int? _chatMasterId; // Chat master ID for API calls
   
   // Voice recording variables
   final VoiceRecorderService _voiceRecorder = VoiceRecorderService();
   bool _isRecording = false;
-  bool _isHoldingMic = false;
   bool _isRecordingLocked = false; // حالت قفل شده (کشیدن به بالا)
   double _micDragOffset = 0.0; // فاصله کشیدن میکروفن
-  String? _recordedVoicePath; // مسیر فایل ضبط شده برای حالت قفل
   Duration _recordingDuration = Duration.zero; // مدت زمان ضبط
   List<double> _waveformData = []; // داده‌های نمودار صوتی
   
@@ -69,6 +67,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
       if (_selectedUser != null) {
         await _loadChatMessages();
         _markAllMessagesAsSeen();
+        await _flushPendingQueue();
       }
     });
     
@@ -83,11 +82,12 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Future<void> _loadUserData() async {
     try {
       final userData = await ApiService.getUserInfo();
-      
+
       if (userData != null) {
         setState(() {
           _userInfo = userData;
-          _currentUserName = '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
+          _currentUserName =
+              '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
           if (_currentUserName.isEmpty) _currentUserName = 'You';
         });
       } else {
@@ -192,6 +192,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     });
     await _loadChatMessages(); // Load messages for selected user
     _markAllMessagesAsSeen(); // Mark messages as seen when chat is opened
+    await _flushPendingQueue();
   }
 
 
@@ -355,21 +356,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
     }
   }
 
-  // Helper method to convert API message type to local MessageType
-  MessageType _getMessageType(String apiType) {
-    switch (apiType.toLowerCase()) {
-      case 'voice':
-        return MessageType.voice;
-      case 'image':
-        return MessageType.image;
-      case 'document':
-      case 'file':
-        return MessageType.file;
-      default:
-        return MessageType.text;
-    }
-  }
-
   // Message status tracking methods
   Future<void> _markMessagesAsSeen(List<int> messageIds) async {
     if (messageIds.isEmpty) return;
@@ -414,13 +400,98 @@ class _ChatroomPageState extends State<ChatroomPage> {
     final unseenMessageIds = _messages
         .where((msg) => !msg.isMe && 
                       msg.messageId != null && 
-                      (msg.status == null || msg.status != 'Seen'))
+                      (msg.status != 'Seen'))
         .map((msg) => msg.messageId!)
         .toList();
     
     if (unseenMessageIds.isNotEmpty) {
       await _markMessagesAsSeen(unseenMessageIds);
     }
+  }
+
+  ChatMessage _copyMessageWithStatus(
+    ChatMessage message, {
+    required bool isSent,
+    required String status,
+    int? id,
+  }) {
+    return ChatMessage(
+      id: id ?? message.id,
+      value: message.value,
+      date: message.date,
+      userId: message.userId,
+      isSent: isSent,
+      status: status,
+      isMine: message.isMine,
+      fileUrl: message.fileUrl,
+      fileUrlThumb: message.fileUrlThumb,
+      sender: message.sender,
+      messageType: message.messageType,
+      duration: message.duration,
+      isPlaying: message.isPlaying,
+    );
+  }
+
+  void _markMessagePending(int localId) {
+    final index = _messages.indexWhere((m) => m.id == localId);
+    if (index == -1) return;
+
+    setState(() {
+      _messages[index] = _copyMessageWithStatus(
+        _messages[index],
+        isSent: false,
+        status: 'Pending',
+      );
+    });
+  }
+
+  Future<void> _enqueuePendingItem({
+    required int localId,
+    required String type,
+    String? value,
+    String? filePath,
+    String? attachmentType,
+  }) async {
+    if (_chatMasterId == null) return;
+
+    await PendingChatQueueService.addItem({
+      'localId': localId.toString(),
+      'chatMasterId': _chatMasterId,
+      'targetUserId': _selectedUser?['id'],
+      'type': type,
+      'value': value,
+      'filePath': filePath,
+      'attachmentType': attachmentType,
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+    _markMessagePending(localId);
+  }
+
+  Future<void> _flushPendingQueue() async {
+    if (_chatMasterId == null) return;
+
+    final sentItems = await PendingChatQueueService.flushForChat(
+      _chatMasterId!,
+      targetUserId: _selectedUser?['id'],
+    );
+    if (sentItems.isEmpty) return;
+
+    setState(() {
+      for (final item in sentItems) {
+        final localId = int.tryParse(item['localId']?.toString() ?? '');
+        if (localId == null) continue;
+        final index = _messages.indexWhere((m) => m.id == localId);
+        if (index == -1) continue;
+
+        final serverId = item['serverId'] as int?;
+        _messages[index] = _copyMessageWithStatus(
+          _messages[index],
+          isSent: true,
+          status: 'Delivered',
+          id: serverId ?? _messages[index].id,
+        );
+      }
+    });
   }
 
   void _sendMessage() async {
@@ -456,11 +527,16 @@ class _ChatroomPageState extends State<ChatroomPage> {
         );
         
         if (result == null) {
+          await _enqueuePendingItem(
+            localId: tempId,
+            type: 'text',
+            value: messageText,
+          );
           // Show error if message failed to send
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Failed to send message. Please try again.', textAlign: TextAlign.center),
-              backgroundColor: Colors.red,
+              content: const Text('Message saved locally. Will resend when online.', textAlign: TextAlign.center),
+              backgroundColor: Colors.orange,
               behavior: SnackBarBehavior.floating,
               margin: EdgeInsets.only(
                 top: MediaQuery.of(context).padding.top + 10,
@@ -499,10 +575,15 @@ class _ChatroomPageState extends State<ChatroomPage> {
         }
       } catch (e) {
         print('Error sending message: $e');
+        await _enqueuePendingItem(
+          localId: tempId,
+          type: 'text',
+          value: messageText,
+        );
         // Show error message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Message sent in offline mode. Login to sync with server.', textAlign: TextAlign.center),
+            content: const Text('Message saved locally. Will resend when online.', textAlign: TextAlign.center),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
             margin: EdgeInsets.only(
@@ -621,10 +702,16 @@ class _ChatroomPageState extends State<ChatroomPage> {
           );
         } else {
           // Show error feedback
+          await _enqueuePendingItem(
+            localId: tempId,
+            type: 'voice',
+            value: 'Voice message',
+            filePath: recordingPath,
+          );
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Failed to send voice message', textAlign: TextAlign.center),
-              backgroundColor: Colors.red,
+              content: const Text('Voice saved locally. Will resend when online.', textAlign: TextAlign.center),
+              backgroundColor: Colors.orange,
               behavior: SnackBarBehavior.floating,
               margin: EdgeInsets.only(
                 top: MediaQuery.of(context).padding.top + 10,
@@ -637,10 +724,16 @@ class _ChatroomPageState extends State<ChatroomPage> {
         }
       } catch (e) {
         print('Error sending voice message: $e');
+        await _enqueuePendingItem(
+          localId: tempId,
+          type: 'voice',
+          value: 'Voice message',
+          filePath: recordingPath,
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Error sending voice message', textAlign: TextAlign.center),
-            backgroundColor: Colors.red,
+            content: const Text('Voice saved locally. Will resend when online.', textAlign: TextAlign.center),
+            backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
             margin: EdgeInsets.only(
               top: MediaQuery.of(context).padding.top + 10,
@@ -761,19 +854,33 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 ),
               );
             } else {
+              await _enqueuePendingItem(
+                localId: tempId,
+                type: 'image',
+                value: 'Photo',
+                filePath: photo.path,
+                attachmentType: 'Image',
+              );
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Failed to send photo'),
-                  backgroundColor: Colors.red,
+                  content: Text('Photo saved locally. Will resend when online.'),
+                  backgroundColor: Colors.orange,
                 ),
               );
             }
           } catch (e) {
             print('Error sending photo: $e');
+            await _enqueuePendingItem(
+              localId: tempId,
+              type: 'image',
+              value: 'Photo',
+              filePath: photo.path,
+              attachmentType: 'Image',
+            );
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Error sending photo'),
-                backgroundColor: Colors.red,
+                content: Text('Photo saved locally. Will resend when online.'),
+                backgroundColor: Colors.orange,
               ),
             );
           }
@@ -862,7 +969,18 @@ class _ChatroomPageState extends State<ChatroomPage> {
                   status: 'Delivered',
                 );
               }
-              
+              setState(() {
+                final index = _messages.indexWhere((m) => m.id == imageMessage.id);
+                if (index != -1) {
+                  _messages[index] = _copyMessageWithStatus(
+                    _messages[index],
+                    isSent: true,
+                    status: 'Delivered',
+                    id: result['id'] ?? imageMessage.id,
+                  );
+                }
+              });
+
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Image sent!'),
@@ -870,19 +988,33 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 ),
               );
             } else {
+              await _enqueuePendingItem(
+                localId: imageMessage.id,
+                type: 'image',
+                value: imageMessage.value,
+                filePath: image.path,
+                attachmentType: 'Image',
+              );
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Failed to send image'),
-                  backgroundColor: Colors.red,
+                  content: Text('Image saved locally. Will resend when online.'),
+                  backgroundColor: Colors.orange,
                 ),
               );
             }
           } catch (e) {
             print('Error sending image: $e');
+            await _enqueuePendingItem(
+              localId: imageMessage.id,
+              type: 'image',
+              value: imageMessage.value,
+              filePath: image.path,
+              attachmentType: 'Image',
+            );
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Error sending image'),
-                backgroundColor: Colors.red,
+                content: Text('Image saved locally. Will resend when online.'),
+                backgroundColor: Colors.orange,
               ),
             );
           }
@@ -1318,70 +1450,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
     );
   }
 
-  Widget _buildUserPictureItem(Map<String, dynamic> user, bool isSelected) {
-    final fullName = '${user['firstName']} ${user['lastName']}';
-    final avatarUrl = user['picUrlAvatar'] ?? '';
-    
-    return InkWell(
-      onTap: () => _selectUser(user),
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: isSelected ? Theme.of(context).primaryColor : Colors.grey.shade300,
-            width: isSelected ? 3 : 1,
-          ),
-          borderRadius: BorderRadius.circular(8),
-          color: isSelected ? Colors.blue[50] : Colors.white,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: CircleAvatar(
-                  radius: 30,
-                  backgroundColor: Colors.grey[400],
-                  backgroundImage: () {
-                    final url = ApiService.getFullAvatarUrl(avatarUrl);
-                    return url != null ? NetworkImage(url) : null;
-                  }(),
-                  child: () {
-                    final url = ApiService.getFullAvatarUrl(avatarUrl);
-                    return url == null
-                        ? Text(
-                            fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 24,
-                            ),
-                          )
-                        : null;
-                  }(),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              child: Text(
-                fullName,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  color: isSelected ? const Color(0xFF075E54) : Colors.black87,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildCircularUserItem(Map<String, dynamic> user, bool isSelected) {
     final fullName = '${user['firstName']} ${user['lastName']}';
     final avatarUrl = user['picUrlAvatar'] ?? '';
@@ -1654,72 +1722,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
     );
   }
 
-  PreferredSizeWidget _buildWhatsAppAppBar() {
-    return AppBar(
-      backgroundColor: const Color(0xFF075E54), // WhatsApp green
-      elevation: 0,
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back, color: Colors.white),
-        onPressed: () => Navigator.pop(context),
-      ),
-      title: Row(
-        children: [
-          const CircleAvatar(
-            radius: 20,
-            backgroundColor: Colors.white,
-            child: Icon(Icons.support_agent, color: Color(0xFF075E54)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Katawaz Exchange Support',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  _userInfo != null ? 'Welcome $_currentUserName' : 'Online now',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 13,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.videocam),
-          onPressed: () {},
-        ),
-        IconButton(
-          icon: const Icon(Icons.call),
-          onPressed: () {},
-        ),
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert, color: Colors.white),
-          onSelected: (value) {
-            // Handle menu actions
-          },
-          itemBuilder: (context) => [
-            const PopupMenuItem(value: 'info', child: Text('Contact info')),
-            const PopupMenuItem(value: 'media', child: Text('Media, links, docs')),
-            const PopupMenuItem(value: 'search', child: Text('Search')),
-            const PopupMenuItem(value: 'mute', child: Text('Mute notifications')),
-            const PopupMenuItem(value: 'wallpaper', child: Text('Wallpaper')),
-          ],
-        ),
-      ],
-    );
-  }
-
   // Start voice recording (hold or lock mode)
   Future<void> _startVoiceRecording() async {
     if (_isRecording) return;
@@ -1782,7 +1784,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
       final path = await _voiceRecorder.stopRecording();
       setState(() {
         _isRecording = false;
-        _isHoldingMic = false;
         _micDragOffset = 0.0;
         _waveformData = [];
       });
@@ -1794,7 +1795,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
       print('Error stopping recording: $e');
       setState(() {
         _isRecording = false;
-        _isHoldingMic = false;
         _micDragOffset = 0.0;
       });
     }
@@ -1803,15 +1803,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
   // Lock recording (for slide-up mode)
   Future<void> _lockRecording() async {
     if (!_isRecording) return;
-    
+
     try {
-      final path = await _voiceRecorder.stopRecording();
       setState(() {
-        _isRecording = false;
         _isRecordingLocked = true;
-        _recordedVoicePath = path;
         _micDragOffset = 0.0;
-        _isHoldingMic = false;
       });
     } catch (e) {
       print('Error locking recording: $e');
@@ -1821,13 +1817,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
   // Cancel recording
   void _cancelRecording() async {
     if (_isRecording) {
-      await _voiceRecorder.stopRecording();
+      await _voiceRecorder.cancelRecording();
     }
     setState(() {
       _isRecording = false;
       _isRecordingLocked = false;
-      _recordedVoicePath = null;
-      _isHoldingMic = false;
       _micDragOffset = 0.0;
       _recordingDuration = Duration.zero;
       _waveformData = [];
@@ -1836,13 +1830,30 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
   // Send locked voice message
   Future<void> _sendLockedVoiceMessage() async {
-    if (_recordedVoicePath == null) return;
-    
-    await _sendVoiceMessage(_recordedVoicePath!);
+    if (!_isRecording && !_isRecordingLocked) return;
+
+    String? path;
+    if (_isRecording) {
+      path = await _voiceRecorder.stopRecording();
+    }
+
+    if (path == null || path.isEmpty) {
+      await _voiceRecorder.cancelRecording();
+      setState(() {
+        _isRecording = false;
+        _isRecordingLocked = false;
+        _recordingDuration = Duration.zero;
+        _waveformData = [];
+      });
+      return;
+    }
+
+    await _sendVoiceMessage(path);
     setState(() {
+      _isRecording = false;
       _isRecordingLocked = false;
-      _recordedVoicePath = null;
       _recordingDuration = Duration.zero;
+      _waveformData = [];
     });
   }
 
@@ -2007,22 +2018,21 @@ class _ChatroomPageState extends State<ChatroomPage> {
                       )
                     : GestureDetector(
                         key: const ValueKey('mic'),
-                        onVerticalDragStart: (_) {
+                        onLongPressStart: (_) {
                           setState(() {
-                            _isHoldingMic = true;
                             _micDragOffset = 0.0;
                           });
                           _startVoiceRecording();
                         },
-                        onVerticalDragUpdate: (details) {
+                        onLongPressMoveUpdate: (details) {
                           setState(() {
-                            _micDragOffset += details.delta.dy;
+                            _micDragOffset = details.offsetFromOrigin.dy;
                             // Clamp offset between -80 and 0
                             if (_micDragOffset < -80) _micDragOffset = -80;
                             if (_micDragOffset > 0) _micDragOffset = 0;
                           });
                         },
-                        onVerticalDragEnd: (_) {
+                        onLongPressEnd: (_) {
                           if (_micDragOffset < -60) {
                             // Locked mode (slid up far enough)
                             _lockRecording();
@@ -2030,16 +2040,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
                             // Send immediately (hold mode)
                             _stopAndSendVoice();
                           }
-                        },
-                        onTapDown: (_) {
-                          setState(() => _isHoldingMic = true);
-                          _startVoiceRecording();
-                        },
-                        onTapUp: (_) {
-                          _stopAndSendVoice();
-                        },
-                        onTapCancel: () {
-                          _cancelRecording();
                         },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
@@ -2091,6 +2091,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
                           style: TextStyle(
                             fontSize: 11,
                             color: _micDragOffset < -30 ? const Color(0xFF075E54) : Colors.grey,
+                          ),
+                        ),
+                        const Text(
+                          'Release to send',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey,
                           ),
                         ),
                       ],
@@ -2228,7 +2235,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
       case MessageType.file:
         return _buildFileMessageWidget(message);
       case MessageType.text:
-      default:
         return Text(
           message.value, // Use value field from new API format
           style: const TextStyle(

@@ -25,7 +25,7 @@ class _LoginPageState extends State<LoginPage> {
       _errorMessage = null;
     });
 
-    final url = Uri.parse('https://10.0.2.2:7179/api/auth/login');
+    final url = Uri.parse('https://209.42.25.31:7179/api/auth/login');
     final body = {
       'UserName': _usernameController.text,
       'Password': _passwordController.text,
@@ -68,8 +68,8 @@ class _LoginPageState extends State<LoginPage> {
           // Save the token using ApiService
           await ApiService.setAuthToken(token);
 
-          if (refreshToken != null && refreshToken!.isNotEmpty) {
-            await ApiService.setRefreshToken(refreshToken!);
+          if (refreshToken != null && refreshToken.isNotEmpty) {
+            await ApiService.setRefreshToken(refreshToken);
           }
           
           // Save login response data first
