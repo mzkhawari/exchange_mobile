@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -317,17 +318,20 @@ class ApiService {
       final accessToken = await getAuthToken();
       final userName = await getStoredUserName();
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/refreshToken'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: json.encode({
-          'refreshToken': refreshToken,
-          'accessToken': accessToken,
-          'userName': userName,
-        }),
-      );
+      const timeout = Duration(seconds: 10);
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/auth/refreshToken'),
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: json.encode({
+              'refreshToken': refreshToken,
+              'accessToken': accessToken,
+              'userName': userName,
+            }),
+          )
+          .timeout(timeout);
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -365,6 +369,10 @@ class ApiService {
         return false;
       }
     } catch (e) {
+      if (e is TimeoutException) {
+        print('Refresh token validation timed out. Skipping validation.');
+        return false;
+      }
       print('Error validating refresh token: $e');
       return false;
     }

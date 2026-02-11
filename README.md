@@ -26,3 +26,7 @@ Start-Process -FilePath 'D:\Projects\AndroidStudio\sdk\emulator\emulator.exe' -A
 # Run the app on the emulator
 cd 'D:\Projects\Androids\exchange_mobile'
 flutter run -d emulator-5554 -->
+
+
+
+# For Local Use Should Change api to 10.0.2.2 , for On line change to 29.42.25.31

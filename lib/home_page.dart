@@ -93,11 +93,27 @@ class _HomePageState extends State<HomePage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(
+          'Sign out',
+          style: GoogleFonts.vazirmatn(
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF0F2342),
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to sign out of this account?',
+          style: GoogleFonts.vazirmatn(
+            fontSize: 13.5,
+            color: Colors.blueGrey[700],
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.blueGrey[700],
+            ),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -111,7 +127,16 @@ class _HomePageState extends State<HomePage> {
                 );
               }
             },
-            child: const Text('Logout'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1C5D8C),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('Sign out'),
           ),
         ],
       ),

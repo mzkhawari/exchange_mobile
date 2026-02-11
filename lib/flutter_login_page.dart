@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'home_page.dart'; // صفحه بعد از لاگین
@@ -135,76 +136,199 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    InputDecoration inputDecoration(String label, IconData icon) {
+      return InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        filled: true,
+        fillColor: const Color(0xFFF4F6FB),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide.none,
+        ),
+      );
+    }
+
     return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // --- لوگو در بالای صفحه ---
-              Image.asset(
-                'assets/logo.png', // مسیر لوگو (باید در pubspec.yaml هم ثبت شده باشد)
-                height: 100,
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Katawaz Exchange',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.deepPurple,
-                ),
-              ),
-              const SizedBox(height: 40),
-              TextField(
-                controller: _usernameController,
-                decoration: const InputDecoration(
-                  labelText: 'Username',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Checkbox(
-                    value: _isRemember,
-                    onChanged: (val) =>
-                        setState(() => _isRemember = val ?? false),
-                  ),
-                  const Text('Remember me'),
-                ],
-              ),
-              if (_errorMessage != null) ...[
-                Text(
-                  _errorMessage!,
-                  style: const TextStyle(color: Colors.red),
-                ),
-                const SizedBox(height: 8),
-              ],
-              const SizedBox(height: 16),
-              _isLoading
-                  ? const CircularProgressIndicator()
-                  : ElevatedButton(
-                      onPressed: _login,
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 48),
-                        backgroundColor: Colors.deepPurple,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text('Login'),
-                    ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF0F2342),
+              Color(0xFF1C5D8C),
+              Color(0xFF13324D),
             ],
           ),
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -80,
+              right: -60,
+              child: Container(
+                width: 220,
+                height: 220,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.08),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -100,
+              left: -40,
+              child: Container(
+                width: 260,
+                height: 260,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.06),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.18),
+                            blurRadius: 24,
+                            offset: const Offset(0, 12),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE9EEF6),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Image.asset(
+                                'assets/logo.png',
+                                height: 46,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          Text(
+                            'Katawaz Exchange',
+                            style: GoogleFonts.playfairDisplay(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF0F2342),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Sign in to continue to your workspace.',
+                            style: GoogleFonts.manrope(
+                              fontSize: 14.5,
+                              color: const Color(0xFF5E6C84),
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          TextField(
+                            controller: _usernameController,
+                            textInputAction: TextInputAction.next,
+                            decoration: inputDecoration('Username', Icons.person_outline),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _passwordController,
+                            obscureText: true,
+                            textInputAction: TextInputAction.done,
+                            decoration: inputDecoration('Password', Icons.lock_outline),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Checkbox(
+                                value: _isRemember,
+                                onChanged: (val) =>
+                                    setState(() => _isRemember = val ?? false),
+                                activeColor: const Color(0xFF1C5D8C),
+                              ),
+                              Text(
+                                'Remember me',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 13.5,
+                                  color: const Color(0xFF2F3A4A),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (_errorMessage != null) ...[
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFDECEC),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                _errorMessage!,
+                                style: GoogleFonts.manrope(
+                                  color: const Color(0xFFB42318),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            height: 52,
+                            child: ElevatedButton(
+                              onPressed: _isLoading ? null : _login,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF1C5D8C),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                              child: _isLoading
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Text(
+                                      'Sign in',
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
