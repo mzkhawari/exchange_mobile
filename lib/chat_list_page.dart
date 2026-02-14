@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'services/api_service.dart';
 import 'chatroom_page.dart';
@@ -14,10 +15,12 @@ class _ChatListPageState extends State<ChatListPage> {
   List<Map<String, dynamic>> _users = [];
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  String? _authToken;
 
   @override
   void initState() {
     super.initState();
+    _loadAuthToken();
     _loadUsers();
   }
 
@@ -25,6 +28,12 @@ class _ChatListPageState extends State<ChatListPage> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadAuthToken() async {
+    final token = await ApiService.getAuthToken();
+    if (!mounted) return;
+    setState(() => _authToken = token);
   }
 
   Future<void> _loadUsers() async {
@@ -39,8 +48,19 @@ class _ChatListPageState extends State<ChatListPage> {
               ? u['fullName']
               : '${u['firstName'] ?? ''} ${u['lastName'] ?? ''}'.trim(),
           'userName': u['userName'] ?? u['username'] ?? '',
-          'mobile': u['mobile'] ?? u['mobileNo'] ?? u['phoneNumber'] ?? u['phone'] ?? '',
-          'picUrlAvatar': u['picUrlAvatar'] ?? '',
+          'mobile':
+              u['mobile'] ??
+              u['mobileNo'] ??
+              u['phoneNumber'] ??
+              u['phone'] ??
+              '',
+          'picUrlAvatar':
+              u['picUrlAvatar'] ??
+              u['picUrlAvatarThumb'] ??
+              u['avatarUrl'] ??
+              u['avatar'] ??
+              u['profileImage'] ??
+              '',
           'lastMessage': u['lastMessage'] ?? 'Available for chat',
           'lastMessageTime': DateTime.now(),
           'unreadCount': u['unreadCount'] ?? 0,
@@ -54,9 +74,9 @@ class _ChatListPageState extends State<ChatListPage> {
     } catch (e) {
       setState(() => _loading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load users: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to load users: $e')));
       }
     }
   }
@@ -65,6 +85,166 @@ class _ChatListPageState extends State<ChatListPage> {
     final h = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');
     return '$h:$m';
+  }
+
+  Widget _buildChatUserCard(Map<String, dynamic> user) {
+    final name = (user['fullName'] ?? '').toString().isNotEmpty
+        ? user['fullName']
+        : '${user['firstName']} ${user['lastName']}';
+    final avatarUrl = (user['picUrlAvatar'] ?? '').toString();
+    final unread = user['unreadCount'] ?? 0;
+    final time = (user['lastMessageTime'] is DateTime)
+        ? user['lastMessageTime'] as DateTime
+        : DateTime.now();
+    final subtitle = (user['lastMessage'] ?? 'Available for chat').toString();
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    ChatroomPage(initialUser: user, standalone: true),
+              ),
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 25,
+                      backgroundColor: const Color(0xFF0C8B7D),
+                      backgroundImage: () {
+                        final url = ApiService.getFullAvatarUrl(avatarUrl);
+                        if (url == null) return null;
+                        final token = _authToken;
+                        final headers = (token == null || token.isEmpty)
+                            ? null
+                            : {
+                                HttpHeaders.authorizationHeader:
+                                    'Bearer $token',
+                              };
+                        return NetworkImage(url, headers: headers);
+                      }(),
+                      child: () {
+                        final url = ApiService.getFullAvatarUrl(avatarUrl);
+                        return url == null
+                            ? Text(
+                                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                            : null;
+                      }(),
+                    ),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 11,
+                        height: 11,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF25D366),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                          color: Color(0xFF1B2A3A),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.blueGrey[600],
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 54,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        _formatTime(time),
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      if (unread > 0)
+                        Container(
+                          margin: const EdgeInsets.only(top: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF25D366),
+                            borderRadius: BorderRadius.all(Radius.circular(10)),
+                          ),
+                          child: Text(
+                            '$unread',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   List<Map<String, dynamic>> _filteredUsers() {
@@ -88,16 +268,29 @@ class _ChatListPageState extends State<ChatListPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F7FA),
       appBar: AppBar(
         title: const Text('Chats'),
+        elevation: 0,
         backgroundColor: const Color(0xFF075E54),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+                Container(
+                  margin: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
                   child: TextField(
                     controller: _searchController,
                     onChanged: (value) => setState(() => _searchQuery = value),
@@ -113,17 +306,11 @@ class _ChatListPageState extends State<ChatListPage> {
                                 setState(() => _searchQuery = '');
                               },
                             ),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(color: Colors.grey[300]!),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 14,
                       ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(color: Colors.grey[300]!),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     ),
                   ),
                 ),
@@ -134,77 +321,12 @@ class _ChatListPageState extends State<ChatListPage> {
                       if (filtered.isEmpty) {
                         return const Center(child: Text('No contacts found'));
                       }
-                      return ListView.separated(
+                      return ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 10),
                         itemCount: filtered.length,
-                        separatorBuilder: (_, __) => const Divider(height: 0, indent: 72),
                         itemBuilder: (context, index) {
-                          final u = filtered[index];
-                          final name = (u['fullName'] ?? '').toString().isNotEmpty
-                              ? u['fullName']
-                              : '${u['firstName']} ${u['lastName']}';
-                          final avatarUrl = (u['picUrlAvatar'] ?? '').toString();
-                          final unread = u['unreadCount'] ?? 0;
-                          final time = (u['lastMessageTime'] is DateTime)
-                              ? u['lastMessageTime'] as DateTime
-                              : DateTime.now();
-                          return ListTile(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                            leading: CircleAvatar(
-                              radius: 24,
-                              backgroundColor: const Color(0xFF075E54),
-                              backgroundImage: () {
-                                final url = ApiService.getFullAvatarUrl(avatarUrl);
-                                return url != null ? NetworkImage(url) : null;
-                              }(),
-                              child: () {
-                                final url = ApiService.getFullAvatarUrl(avatarUrl);
-                                return url == null
-                                    ? Text(
-                                        name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                      )
-                                    : null;
-                              }(),
-                            ),
-                            title: Text(
-                              name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(
-                              (u['lastMessage'] ?? 'Available for chat').toString(),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(_formatTime(time), style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                                if (unread > 0)
-                                  Container(
-                                    margin: const EdgeInsets.only(top: 6),
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFF25D366),
-                                      borderRadius: BorderRadius.all(Radius.circular(10)),
-                                    ),
-                                    child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 11)),
-                                  ),
-                              ],
-                            ),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => ChatroomPage(
-                                    initialUser: u,
-                                    standalone: true,
-                                  ),
-                                ),
-                              );
-                            },
-                          );
+                          final user = filtered[index];
+                          return _buildChatUserCard(user);
                         },
                       );
                     },

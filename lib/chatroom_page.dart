@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'services/api_service.dart';
 import 'services/voice_recorder_service.dart';
 import 'services/file_cache_service.dart';
@@ -20,45 +22,49 @@ class ChatroomPage extends StatefulWidget {
 class _ChatroomPageState extends State<ChatroomPage> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  
+
   List<ChatMessage> _messages = [];
   Map<String, dynamic>? _userInfo;
   bool _isLoading = true;
   String _currentUserName = 'You';
-  
+
   // User selection variables
   Map<String, dynamic>? _selectedUser;
   List<Map<String, dynamic>> _availableUsers = [];
   bool _isLoadingUsers = true;
   bool _isExpanded = false; // Track if left sidebar is expanded
   int? _chatMasterId; // Chat master ID for API calls
-  
+
   // Voice recording variables
   final VoiceRecorderService _voiceRecorder = VoiceRecorderService();
   bool _isRecording = false;
   bool _isRecordingLocked = false; // حالت قفل شده (کشیدن به بالا)
   double _micDragOffset = 0.0; // فاصله کشیدن میکروفن
+  double _micDragXOffset = 0.0; // فاصله کشیدن به چپ برای کنسل
+  bool _cancelRecordingByGesture = false;
   Duration _recordingDuration = Duration.zero; // مدت زمان ضبط
   List<double> _waveformData = []; // داده‌های نمودار صوتی
-  
+  final Set<String> _downloadingAttachmentKeys = <String>{};
+  final Map<String, String> _downloadedAttachmentPaths = <String, String>{};
+
   // Image picker
   final ImagePicker _picker = ImagePicker();
-  
+
   @override
   void initState() {
     super.initState();
-    
+
     // Log API configuration for this session
     ApiService.logCurrentConfig();
-    
+
     _initializeChat();
-    
+
     // If standalone mode with initialUser, set immediately
     if (widget.initialUser != null) {
       _selectedUser = widget.initialUser;
       _chatMasterId = widget.initialUser!['id'] as int?;
     }
-    
+
     _loadUserData().then((_) async {
       // Always load available users, regardless of authentication status
       await _loadAvailableUsers();
@@ -70,7 +76,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
         await _flushPendingQueue();
       }
     });
-    
+
     // Add listener to message controller to update send button
     _messageController.addListener(() {
       setState(() {
@@ -87,7 +93,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
         setState(() {
           _userInfo = userData;
           _currentUserName =
-              '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
+              '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'
+                  .trim();
           if (_currentUserName.isEmpty) _currentUserName = 'You';
         });
       } else {
@@ -111,10 +118,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Future<void> _loadAvailableUsers() async {
     try {
       setState(() => _isLoadingUsers = true);
-      
+
       // Get users from API
       final users = await ApiService.getAllUsers();
-      
+
       if (users.isNotEmpty) {
         // Transform API user data to match UI requirements
         final transformedUsers = users.map((user) {
@@ -124,16 +131,25 @@ class _ChatroomPageState extends State<ChatroomPage> {
             'id': user['id'] ?? 0,
             'firstName': user['firstName'] ?? 'Unknown',
             'lastName': user['lastName'] ?? 'User',
-            'picUrlAvatar': user['picUrlAvatar'] ?? '', // Store raw URL
+            'picUrlAvatar':
+                user['picUrlAvatar'] ??
+                user['picUrlAvatarThumb'] ??
+                user['avatarUrl'] ??
+                user['avatar'] ??
+                user['profileImage'] ??
+                '', // Store raw URL
             'userName': user['userName'] ?? '',
             'email': user['email'] ?? '',
-            'isOnline': true, // Default to online, can be updated with real status
+            'isOnline':
+                true, // Default to online, can be updated with real status
             'lastMessage': 'Available for chat',
-            'lastMessageTime': DateTime.now().subtract(const Duration(minutes: 1)),
+            'lastMessageTime': DateTime.now().subtract(
+              const Duration(minutes: 1),
+            ),
             'unreadCount': 0,
           };
         }).toList();
-        
+
         setState(() {
           _availableUsers = transformedUsers;
           _isLoadingUsers = false;
@@ -148,7 +164,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
             'picUrlAvatar': '/content/user/thumb/ahmad_avatar.png',
             'isOnline': true,
             'lastMessage': 'Hello! How can I help you today?',
-            'lastMessageTime': DateTime.now().subtract(const Duration(minutes: 5)),
+            'lastMessageTime': DateTime.now().subtract(
+              const Duration(minutes: 5),
+            ),
             'unreadCount': 2,
           },
           {
@@ -158,11 +176,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
             'picUrlAvatar': '/content/user/thumb/sara_avatar.png',
             'isOnline': false,
             'lastMessage': 'Thanks for the transaction details.',
-            'lastMessageTime': DateTime.now().subtract(const Duration(hours: 2)),
+            'lastMessageTime': DateTime.now().subtract(
+              const Duration(hours: 2),
+            ),
             'unreadCount': 0,
           },
         ];
-        
+
         setState(() {
           _availableUsers = mockUsers;
           _isLoadingUsers = false;
@@ -194,8 +214,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
     _markAllMessagesAsSeen(); // Mark messages as seen when chat is opened
     await _flushPendingQueue();
   }
-
-
 
   void _initializeChat() {
     _messages = [
@@ -247,91 +265,117 @@ class _ChatroomPageState extends State<ChatroomPage> {
         if (response != null) {
           // Extract ChatMasterId from API response - this is unique for each chat partner
           final chatMasterId = response['chatMasterId'];
-          final messages = response['messages'] as List<Map<String, dynamic>>? ?? [];
-          
+          final messages =
+              response['messages'] as List<Map<String, dynamic>>? ?? [];
+
           if (chatMasterId != null) {
             _chatMasterId = chatMasterId;
-            print('🔍 Updated _chatMasterId from getChatDetails: $_chatMasterId');
+            print(
+              '🔍 Updated _chatMasterId from getChatDetails: $_chatMasterId',
+            );
           }
-          
+
           setState(() {
             // Clear previous messages before loading new chat
             _messages.clear();
-            
+
             if (messages.isNotEmpty) {
               // Debug: print raw first message to see structure
               print('🔍 Raw first message: ${messages.first}');
               print('🔍 Message type: ${messages.first.runtimeType}');
-              
-              _messages.addAll(messages.map((msg) {
-                // Parse new API format with proper type conversion
-                final messageId = int.tryParse((msg['Id'] ?? msg['id'] ?? 0).toString()) ?? 0;
-                final messageValue = (msg['Value'] ?? msg['value'] ?? '').toString();
-                final fileUrl = (msg['FileUrl'] ?? msg['fileUrl'])?.toString();
-                final fileUrlThumb = (msg['FileUrlThumb'] ?? msg['fileUrlThumb'])?.toString();
-                final dateString = (msg['Date'] ?? msg['date'] ?? '').toString();
-                final messageDate = DateTime.tryParse(dateString) ?? DateTime.now();
-                final senderId = int.tryParse((msg['UserId'] ?? msg['userId'] ?? 0).toString()) ?? 0;
-                final isSent = (msg['IsSent'] ?? msg['isSent'] ?? false) == true;
-                final messageStatus = (msg['Status'] ?? msg['status'] ?? 'None').toString();
-                final isMine = (msg['IsMine'] ?? msg['isMine'] ?? false) == true;
-                
-                print('🔍 Parsing message: id=$messageId, value=$messageValue, fileUrl=$fileUrl');
-                
-                // Determine message type based on file URL
-                MessageType msgType = MessageType.text;
-                String? fullFileUrl = fileUrl;
-                
-                if (fileUrl != null && fileUrl.isNotEmpty) {
-                  // Construct full URL if fileUrl is relative path
-                  if (!fileUrl.startsWith('http')) {
-                    final imageUrl = ApiService.getImageUrl();
-                    fullFileUrl = '$imageUrl/$fileUrl';
+
+              _messages.addAll(
+                messages.map((msg) {
+                  // Parse new API format with proper type conversion
+                  final messageId =
+                      int.tryParse((msg['Id'] ?? msg['id'] ?? 0).toString()) ??
+                      0;
+                  final messageValue = (msg['Value'] ?? msg['value'] ?? '')
+                      .toString();
+                  final fileUrl = (msg['FileUrl'] ?? msg['fileUrl'])
+                      ?.toString();
+                  final fileUrlThumb =
+                      (msg['FileUrlThumb'] ?? msg['fileUrlThumb'])?.toString();
+                  final dateString = (msg['Date'] ?? msg['date'] ?? '')
+                      .toString();
+                  final messageDate =
+                      DateTime.tryParse(dateString) ?? DateTime.now();
+                  final senderId =
+                      int.tryParse(
+                        (msg['UserId'] ?? msg['userId'] ?? 0).toString(),
+                      ) ??
+                      0;
+                  final isSent =
+                      (msg['IsSent'] ?? msg['isSent'] ?? false) == true;
+                  final messageStatus =
+                      (msg['Status'] ?? msg['status'] ?? 'None').toString();
+                  final isMine =
+                      (msg['IsMine'] ?? msg['isMine'] ?? false) == true;
+
+                  print(
+                    '🔍 Parsing message: id=$messageId, value=$messageValue, fileUrl=$fileUrl',
+                  );
+
+                  // Determine message type based on file URL
+                  MessageType msgType = MessageType.text;
+                  String? fullFileUrl = fileUrl;
+
+                  if (fileUrl != null && fileUrl.isNotEmpty) {
+                    // Construct full URL if fileUrl is relative path
+                    if (!fileUrl.startsWith('http')) {
+                      final imageUrl = ApiService.getImageUrl();
+                      fullFileUrl = '$imageUrl/$fileUrl';
+                    }
+
+                    // Determine message type based on file extension
+                    final lowerUrl = fileUrl.toLowerCase();
+                    print('🔍 Checking file URL: $lowerUrl');
+
+                    if (lowerUrl.contains('.mp3') ||
+                        lowerUrl.contains('.wav') ||
+                        lowerUrl.contains('.m4a') ||
+                        lowerUrl.contains('.aac') || // Added .aac support
+                        lowerUrl.contains('.ogg')) {
+                      msgType = MessageType.voice;
+                      print('✅ Detected as VOICE');
+                    } else if (lowerUrl.contains('.jpg') ||
+                        lowerUrl.contains('.png') ||
+                        lowerUrl.contains('.jpeg') ||
+                        lowerUrl.contains('.gif') ||
+                        lowerUrl.contains('.webp')) {
+                      msgType = MessageType.image;
+                      print('✅ Detected as IMAGE');
+                    } else {
+                      msgType = MessageType.file;
+                      print('✅ Detected as FILE');
+                    }
                   }
-                  
-                  // Determine message type based on file extension
-                  final lowerUrl = fileUrl.toLowerCase();
-                  print('🔍 Checking file URL: $lowerUrl');
-                  
-                  if (lowerUrl.contains('.mp3') || 
-                      lowerUrl.contains('.wav') ||
-                      lowerUrl.contains('.m4a') ||
-                      lowerUrl.contains('.aac') ||  // Added .aac support
-                      lowerUrl.contains('.ogg')) {
-                    msgType = MessageType.voice;
-                    print('✅ Detected as VOICE');
-                  } else if (lowerUrl.contains('.jpg') ||
-                           lowerUrl.contains('.png') ||
-                           lowerUrl.contains('.jpeg') ||
-                           lowerUrl.contains('.gif') ||
-                           lowerUrl.contains('.webp')) {
-                    msgType = MessageType.image;
-                    print('✅ Detected as IMAGE');
-                  } else {
-                    msgType = MessageType.file;
-                    print('✅ Detected as FILE');
+
+                  // Debug print
+                  if (msgType == MessageType.voice) {
+                    print(
+                      '📢 Voice message detected: value=$messageValue, fileUrl=$fullFileUrl, msgType=$msgType',
+                    );
                   }
-                }
-                
-                // Debug print
-                if (msgType == MessageType.voice) {
-                  print('📢 Voice message detected: value=$messageValue, fileUrl=$fullFileUrl, msgType=$msgType');
-                }
-                
-                return ChatMessage(
-                  id: messageId,
-                  value: messageValue,
-                  fileUrl: fullFileUrl,  // Use full URL instead of relative path
-                  fileUrlThumb: fileUrlThumb,
-                  date: messageDate,
-                  userId: senderId,
-                  isSent: isSent,
-                  status: messageStatus,
-                  isMine: isMine,
-                  sender: isMine ? _currentUserName : (_selectedUser?['firstName'] ?? 'Unknown'),
-                  messageType: msgType,
-                );
-              }).toList());
+
+                  return ChatMessage(
+                    id: messageId,
+                    value: messageValue,
+                    fileUrl:
+                        fullFileUrl, // Use full URL instead of relative path
+                    fileUrlThumb: fileUrlThumb,
+                    date: messageDate,
+                    userId: senderId,
+                    isSent: isSent,
+                    status: messageStatus,
+                    isMine: isMine,
+                    sender: isMine
+                        ? _currentUserName
+                        : (_selectedUser?['firstName'] ?? 'Unknown'),
+                    messageType: msgType,
+                  );
+                }).toList(),
+              );
             }
           });
         }
@@ -341,17 +385,20 @@ class _ChatroomPageState extends State<ChatroomPage> {
     } else if (_userInfo == null) {
       // Guest mode - show welcome message
       setState(() {
-        _messages.add(ChatMessage(
-          id: 0,
-          value: 'Welcome to the chat room! You are in guest mode. Login to sync with your conversations.',
-          date: DateTime.now(),
-          userId: 0,
-          isSent: true,
-          status: 'Delivered',
-          isMine: false,
-          sender: 'System',
-          messageType: MessageType.text,
-        ));
+        _messages.add(
+          ChatMessage(
+            id: 0,
+            value:
+                'Welcome to the chat room! You are in guest mode. Login to sync with your conversations.',
+            date: DateTime.now(),
+            userId: 0,
+            isSent: true,
+            status: 'Delivered',
+            isMine: false,
+            sender: 'System',
+            messageType: MessageType.text,
+          ),
+        );
       });
     }
   }
@@ -359,7 +406,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
   // Message status tracking methods
   Future<void> _markMessagesAsSeen(List<int> messageIds) async {
     if (messageIds.isEmpty) return;
-    
+
     try {
       await ApiService.updateChatDetailStatus(
         chatDetailIds: messageIds,
@@ -398,12 +445,12 @@ class _ChatroomPageState extends State<ChatroomPage> {
   // Method to mark all unread messages as seen when chat is opened
   void _markAllMessagesAsSeen() async {
     final unseenMessageIds = _messages
-        .where((msg) => !msg.isMe && 
-                      msg.messageId != null && 
-                      (msg.status != 'Seen'))
+        .where(
+          (msg) => !msg.isMe && msg.messageId != null && (msg.status != 'Seen'),
+        )
         .map((msg) => msg.messageId!)
         .toList();
-    
+
     if (unseenMessageIds.isNotEmpty) {
       await _markMessagesAsSeen(unseenMessageIds);
     }
@@ -514,7 +561,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     setState(() {
       _messages.add(message);
     });
-    
+
     _messageController.clear();
     _scrollToBottom();
 
@@ -525,7 +572,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
           chatMasterId: _chatMasterId!,
           value: messageText,
         );
-        
+
         if (result == null) {
           await _enqueuePendingItem(
             localId: tempId,
@@ -535,7 +582,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
           // Show error if message failed to send
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Message saved locally. Will resend when online.', textAlign: TextAlign.center),
+              content: const Text(
+                'Message saved locally. Will resend when online.',
+                textAlign: TextAlign.center,
+              ),
               backgroundColor: Colors.orange,
               behavior: SnackBarBehavior.floating,
               margin: EdgeInsets.only(
@@ -543,7 +593,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 left: 20,
                 right: 20,
               ),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           );
         } else {
@@ -564,7 +616,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
               );
             }
           });
-          
+
           // Mark message as delivered if ID is available
           if (result.containsKey('id') && result['id'] != null) {
             await ApiService.updateChatDetailStatus(
@@ -583,7 +635,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
         // Show error message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Message saved locally. Will resend when online.', textAlign: TextAlign.center),
+            content: const Text(
+              'Message saved locally. Will resend when online.',
+              textAlign: TextAlign.center,
+            ),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
             margin: EdgeInsets.only(
@@ -591,7 +646,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
               left: 20,
               right: 20,
             ),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         );
       }
@@ -599,7 +656,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
       // Guest mode - show info message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Message sent in guest mode. Login to sync with server.', textAlign: TextAlign.center),
+          content: const Text(
+            'Message sent in guest mode. Login to sync with server.',
+            textAlign: TextAlign.center,
+          ),
           backgroundColor: Colors.blue,
           behavior: SnackBarBehavior.floating,
           margin: EdgeInsets.only(
@@ -607,7 +667,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
             left: 20,
             right: 20,
           ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
       );
     }
@@ -618,7 +680,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Future<void> _sendVoiceMessage(String recordingPath) async {
     // Get audio duration
     final duration = await _voiceRecorder.getAudioDuration(recordingPath);
-    
+
     // Create voice message
     final tempId = DateTime.now().millisecondsSinceEpoch;
     final voiceMessage = ChatMessage(
@@ -638,24 +700,26 @@ class _ChatroomPageState extends State<ChatroomPage> {
     setState(() {
       _messages.add(voiceMessage);
     });
-    
+
     _scrollToBottom();
-    
+
     // Send voice message to API if authenticated and chatMasterId available
     if (_userInfo != null && _chatMasterId != null && _selectedUser != null) {
       try {
         print('🎤 DEBUG: Sending voice message...');
         print('🎤 DEBUG: Recording path: $recordingPath');
         print('🎤 DEBUG: File exists: ${await File(recordingPath).exists()}');
-        print('🎤 DEBUG: File size: ${await File(recordingPath).length()} bytes');
+        print(
+          '🎤 DEBUG: File size: ${await File(recordingPath).length()} bytes',
+        );
         print('🎤 DEBUG: ChatMasterId: $_chatMasterId');
-        
+
         final result = await ApiService.postChatDetail(
           chatMasterId: _chatMasterId!,
           value: 'Voice message', // API requires value field
           voiceFilePath: recordingPath,
         );
-        
+
         if (result != null) {
           // API returned success - update message status to show check mark
           setState(() {
@@ -676,7 +740,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
               );
             }
           });
-          
+
           // Mark voice message as delivered
           if (result.containsKey('id') && result['id'] != null) {
             await ApiService.updateChatDetailStatus(
@@ -684,11 +748,14 @@ class _ChatroomPageState extends State<ChatroomPage> {
               status: 'Delivered',
             );
           }
-          
+
           // Show success feedback
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Voice message sent!', textAlign: TextAlign.center),
+              content: const Text(
+                'Voice message sent!',
+                textAlign: TextAlign.center,
+              ),
               duration: const Duration(seconds: 2),
               behavior: SnackBarBehavior.floating,
               margin: EdgeInsets.only(
@@ -696,7 +763,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 left: 20,
                 right: 20,
               ),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
               backgroundColor: Colors.green,
             ),
           );
@@ -710,7 +779,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
           );
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Voice saved locally. Will resend when online.', textAlign: TextAlign.center),
+              content: const Text(
+                'Voice saved locally. Will resend when online.',
+                textAlign: TextAlign.center,
+              ),
               backgroundColor: Colors.orange,
               behavior: SnackBarBehavior.floating,
               margin: EdgeInsets.only(
@@ -718,7 +790,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 left: 20,
                 right: 20,
               ),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           );
         }
@@ -732,7 +806,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
         );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Voice saved locally. Will resend when online.', textAlign: TextAlign.center),
+            content: const Text(
+              'Voice saved locally. Will resend when online.',
+              textAlign: TextAlign.center,
+            ),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
             margin: EdgeInsets.only(
@@ -740,7 +817,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
               left: 20,
               right: 20,
             ),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         );
       }
@@ -756,11 +835,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
       } else {
         errorMessage = 'Voice message sent in guest mode!';
       }
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(errorMessage, textAlign: TextAlign.center),
-          backgroundColor: errorMessage.contains('guest') ? Colors.green : Colors.orange,
+          backgroundColor: errorMessage.contains('guest')
+              ? Colors.green
+              : Colors.orange,
           duration: const Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
           margin: EdgeInsets.only(
@@ -768,7 +849,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
             left: 20,
             right: 20,
           ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
       );
     }
@@ -781,7 +864,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
         source: ImageSource.camera,
         imageQuality: 80,
       );
-      
+
       if (photo != null) {
         final tempId = DateTime.now().millisecondsSinceEpoch;
         final imageMessage = ChatMessage(
@@ -800,25 +883,29 @@ class _ChatroomPageState extends State<ChatroomPage> {
         setState(() {
           _messages.add(imageMessage);
         });
-        
+
         _scrollToBottom();
-        
+
         // Send photo to API if authenticated and chatMasterId available
-        if (_userInfo != null && _chatMasterId != null && _selectedUser != null) {
+        if (_userInfo != null &&
+            _chatMasterId != null &&
+            _selectedUser != null) {
           try {
             print('📸 DEBUG: Sending photo...');
             print('📸 DEBUG: Photo path: ${photo.path}');
             print('📸 DEBUG: File exists: ${await File(photo.path).exists()}');
-            print('📸 DEBUG: File size: ${await File(photo.path).length()} bytes');
+            print(
+              '📸 DEBUG: File size: ${await File(photo.path).length()} bytes',
+            );
             print('📸 DEBUG: ChatMasterId: $_chatMasterId');
-            
+
             final result = await ApiService.postChatDetail(
               chatMasterId: _chatMasterId!,
               value: 'Photo', // API requires value field
               attachmentFilePath: photo.path,
               attachmentType: 'Image',
             );
-            
+
             if (result != null) {
               // API returned success - update message status to show check mark
               setState(() {
@@ -838,7 +925,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                   );
                 }
               });
-              
+
               // Mark image message as delivered
               if (result.containsKey('id') && result['id'] != null) {
                 await ApiService.updateChatDetailStatus(
@@ -846,7 +933,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                   status: 'Delivered',
                 );
               }
-              
+
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Photo sent!'),
@@ -863,7 +950,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
               );
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Photo saved locally. Will resend when online.'),
+                  content: Text(
+                    'Photo saved locally. Will resend when online.',
+                  ),
                   backgroundColor: Colors.orange,
                 ),
               );
@@ -896,11 +985,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
           } else {
             errorMessage = 'Photo sent in guest mode!';
           }
-          
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(errorMessage),
-              backgroundColor: errorMessage.contains('guest') ? Colors.green : Colors.orange,
+              backgroundColor: errorMessage.contains('guest')
+                  ? Colors.green
+                  : Colors.orange,
               duration: const Duration(seconds: 2),
             ),
           );
@@ -924,7 +1015,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
         source: ImageSource.gallery,
         imageQuality: 80,
       );
-      
+
       if (image != null) {
         final imageMessage = ChatMessage(
           id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
@@ -942,25 +1033,29 @@ class _ChatroomPageState extends State<ChatroomPage> {
         setState(() {
           _messages.add(imageMessage);
         });
-        
+
         _scrollToBottom();
-        
+
         // Send image to API if authenticated and chatMasterId available
-        if (_userInfo != null && _chatMasterId != null && _selectedUser != null) {
+        if (_userInfo != null &&
+            _chatMasterId != null &&
+            _selectedUser != null) {
           try {
             print('🖼️ DEBUG: Sending gallery image...');
             print('🖼️ DEBUG: Image path: ${image.path}');
             print('🖼️ DEBUG: File exists: ${await File(image.path).exists()}');
-            print('🖼️ DEBUG: File size: ${await File(image.path).length()} bytes');
+            print(
+              '🖼️ DEBUG: File size: ${await File(image.path).length()} bytes',
+            );
             print('🖼️ DEBUG: ChatMasterId: $_chatMasterId');
-            
+
             final result = await ApiService.postChatDetail(
               chatMasterId: _chatMasterId!,
               value: 'Image', // API requires value field
               attachmentFilePath: image.path,
               attachmentType: 'Image',
             );
-            
+
             if (result != null) {
               // Mark image message as delivered
               if (result['id'] != null) {
@@ -970,7 +1065,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 );
               }
               setState(() {
-                final index = _messages.indexWhere((m) => m.id == imageMessage.id);
+                final index = _messages.indexWhere(
+                  (m) => m.id == imageMessage.id,
+                );
                 if (index != -1) {
                   _messages[index] = _copyMessageWithStatus(
                     _messages[index],
@@ -997,7 +1094,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
               );
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Image saved locally. Will resend when online.'),
+                  content: Text(
+                    'Image saved locally. Will resend when online.',
+                  ),
                   backgroundColor: Colors.orange,
                 ),
               );
@@ -1030,11 +1129,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
           } else {
             errorMessage = 'Image sent in guest mode!';
           }
-          
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(errorMessage),
-              backgroundColor: errorMessage.contains('guest') ? Colors.green : Colors.orange,
+              backgroundColor: errorMessage.contains('guest')
+                  ? Colors.green
+                  : Colors.orange,
               duration: const Duration(seconds: 2),
             ),
           );
@@ -1142,11 +1243,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
               borderRadius: BorderRadius.circular(30),
               border: Border.all(color: color.withOpacity(0.3)),
             ),
-            child: Icon(
-              icon,
-              color: color,
-              size: 30,
-            ),
+            child: Icon(icon, color: color, size: 30),
           ),
           const SizedBox(height: 8),
           Text(
@@ -1189,12 +1286,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Widget build(BuildContext context) {
     if (_isLoading || _isLoadingUsers) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text('Chat'),
-        ),
-        body: const Center(
-          child: CircularProgressIndicator(),
-        ),
+        appBar: AppBar(title: const Text('Chat')),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -1266,32 +1359,36 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 // Users list
                 Expanded(
                   child: _isExpanded
-                    ? ListView.builder(
-                        itemCount: _availableUsers.length,
-                        itemBuilder: (context, index) {
-                          final user = _availableUsers[index];
-                          final isSelected = _selectedUser?['id'] == user['id'];
-                          
-                          return _buildUserListItem(user, isSelected);
-                        },
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: _availableUsers.length,
-                        itemBuilder: (context, index) {
-                          final user = _availableUsers[index];
-                          final isSelected = _selectedUser?['id'] == user['id'];
-                          
-                          return _buildCircularUserItem(user, isSelected);
-                        },
-                      ),
+                      ? ListView.builder(
+                          itemCount: _availableUsers.length,
+                          itemBuilder: (context, index) {
+                            final user = _availableUsers[index];
+                            final isSelected =
+                                _selectedUser?['id'] == user['id'];
+
+                            return _buildUserListItem(user, isSelected);
+                          },
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: _availableUsers.length,
+                          itemBuilder: (context, index) {
+                            final user = _availableUsers[index];
+                            final isSelected =
+                                _selectedUser?['id'] == user['id'];
+
+                            return _buildCircularUserItem(user, isSelected);
+                          },
+                        ),
                 ),
               ],
             ),
           ),
           // Right side - Chat area
           Expanded(
-            child: _selectedUser == null ? _buildNoChatSelected() : _buildChatArea(),
+            child: _selectedUser == null
+                ? _buildNoChatSelected()
+                : _buildChatArea(),
           ),
         ],
       ),
@@ -1303,7 +1400,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     final isOnline = user['isOnline'] ?? false;
     final unreadCount = user['unreadCount'] ?? 0;
     final avatarUrl = user['picUrlAvatar'] ?? '';
-    
+
     return InkWell(
       onTap: () => _selectUser(user),
       child: Container(
@@ -1329,36 +1426,47 @@ class _ChatroomPageState extends State<ChatroomPage> {
                                   width: 50,
                                   height: 50,
                                   fit: BoxFit.cover,
-                              loadingBuilder: (context, child, loadingProgress) {
-                                if (loadingProgress == null) return child;
-                                return const Center(
-                                  child: SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                    ),
-                                  ),
-                                );
-                              },
-                              errorBuilder: (context, error, stackTrace) {
-                                print('Error loading avatar for $fullName: $error');
-                                return Center(
-                                  child: Text(
-                                    fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 18,
-                                    ),
-                                  ),
-                                );
-                              },
-                            )
+                                  loadingBuilder:
+                                      (context, child, loadingProgress) {
+                                        if (loadingProgress == null)
+                                          return child;
+                                        return const Center(
+                                          child: SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                    Colors.white,
+                                                  ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                  errorBuilder: (context, error, stackTrace) {
+                                    print(
+                                      'Error loading avatar for $fullName: $error',
+                                    );
+                                    return Center(
+                                      child: Text(
+                                        fullName.isNotEmpty
+                                            ? fullName[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 18,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                )
                               : Center(
                                   child: Text(
-                                    fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
+                                    fullName.isNotEmpty
+                                        ? fullName[0].toUpperCase()
+                                        : '?',
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.bold,
@@ -1397,16 +1505,23 @@ class _ChatroomPageState extends State<ChatroomPage> {
                             child: Text(
                               fullName,
                               style: TextStyle(
-                                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.w600,
                                 fontSize: 14,
-                                color: isSelected ? const Color(0xFF075E54) : Colors.black87,
+                                color: isSelected
+                                    ? const Color(0xFF075E54)
+                                    : Colors.black87,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           if (unreadCount > 0)
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: const BoxDecoration(
                                 color: Color(0xFF075E54),
                                 shape: BoxShape.circle,
@@ -1428,7 +1543,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey[600],
-                          fontWeight: unreadCount > 0 ? FontWeight.w500 : FontWeight.normal,
+                          fontWeight: unreadCount > 0
+                              ? FontWeight.w500
+                              : FontWeight.normal,
                         ),
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1,
@@ -1453,7 +1570,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Widget _buildCircularUserItem(Map<String, dynamic> user, bool isSelected) {
     final fullName = '${user['firstName']} ${user['lastName']}';
     final avatarUrl = user['picUrlAvatar'] ?? '';
-    
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
       child: InkWell(
@@ -1463,7 +1580,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
             border: Border.all(
-              color: isSelected ? Theme.of(context).primaryColor : Colors.transparent,
+              color: isSelected
+                  ? Theme.of(context).primaryColor
+                  : Colors.transparent,
               width: 2,
             ),
             borderRadius: BorderRadius.circular(30),
@@ -1482,33 +1601,37 @@ class _ChatroomPageState extends State<ChatroomPage> {
                         width: 56,
                         height: 56,
                         fit: BoxFit.cover,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return const Center(
-                        child: SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        ),
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      print('Error loading avatar for $fullName: $error');
-                      return Center(
-                        child: Text(
-                          fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        ),
-                      );
-                    },
-                  )
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return const Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          print('Error loading avatar for $fullName: $error');
+                          return Center(
+                            child: Text(
+                              fullName.isNotEmpty
+                                  ? fullName[0].toUpperCase()
+                                  : '?',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          );
+                        },
+                      )
                     : Center(
                         child: Text(
                           fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
@@ -1534,11 +1657,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.chat_bubble_outline,
-              size: 80,
-              color: Color(0xFFBDBDBD),
-            ),
+            Icon(Icons.chat_bubble_outline, size: 80, color: Color(0xFFBDBDBD)),
             SizedBox(height: 16),
             Text(
               'Select a contact to start chatting',
@@ -1551,10 +1670,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
             SizedBox(height: 8),
             Text(
               'Choose from the list on the left',
-              style: TextStyle(
-                fontSize: 14,
-                color: Color(0xFFBDBDBD),
-              ),
+              style: TextStyle(fontSize: 14, color: Color(0xFFBDBDBD)),
             ),
           ],
         ),
@@ -1564,9 +1680,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
   Widget _buildChatArea({bool standalone = false}) {
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFFECE5DD),
-      ),
+      decoration: const BoxDecoration(color: Color(0xFFECE5DD)),
       child: Column(
         children: [
           // Chat header
@@ -1579,13 +1693,20 @@ class _ChatroomPageState extends State<ChatroomPage> {
               ),
               child: ListView.builder(
                 controller: _scrollController,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 10,
+                ),
                 itemCount: _messages.length,
                 itemBuilder: (context, index) {
                   final message = _messages[index];
-                  final showDateHeader = index == 0 || 
-                      !_isSameDay(message.timestamp, _messages[index - 1].timestamp);
-                  
+                  final showDateHeader =
+                      index == 0 ||
+                      !_isSameDay(
+                        message.timestamp,
+                        _messages[index - 1].timestamp,
+                      );
+
                   return Column(
                     children: [
                       if (showDateHeader) _buildDateHeader(message.timestamp),
@@ -1605,18 +1726,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
   Widget _buildChatHeader({bool standalone = false}) {
     if (_selectedUser == null) return const SizedBox.shrink();
-    
-    final fullName = '${_selectedUser!['firstName']} ${_selectedUser!['lastName']}';
+
+    final fullName =
+        '${_selectedUser!['firstName']} ${_selectedUser!['lastName']}';
     final isOnline = _selectedUser!['isOnline'] ?? false;
     final avatarUrl = _selectedUser!['picUrlAvatar'] ?? '';
-    
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: const BoxDecoration(
         color: Color(0xFF075E54),
-        border: Border(
-          bottom: BorderSide(color: Color(0xFF054A42), width: 1),
-        ),
+        border: Border(bottom: BorderSide(color: Color(0xFF054A42), width: 1)),
       ),
       child: Row(
         children: [
@@ -1691,7 +1811,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
                     if (_selectedUser!['userRoleTitle'] != null) ...[
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white24,
                           borderRadius: BorderRadius.circular(8),
@@ -1725,7 +1848,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
   // Start voice recording (hold or lock mode)
   Future<void> _startVoiceRecording() async {
     if (_isRecording) return;
-    
+
     final hasPermission = await _voiceRecorder.checkPermissions();
     if (!hasPermission) {
       if (mounted) {
@@ -1738,7 +1861,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
               left: 10,
               right: 10,
             ),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         );
       }
@@ -1749,28 +1874,18 @@ class _ChatroomPageState extends State<ChatroomPage> {
       await _voiceRecorder.startRecording();
       setState(() {
         _isRecording = true;
+        _isRecordingLocked = false;
+        _micDragOffset = 0.0;
+        _micDragXOffset = 0.0;
+        _cancelRecordingByGesture = false;
         _recordingDuration = Duration.zero;
         _waveformData = [];
       });
-      
+
+      HapticFeedback.lightImpact();
+
       // Start waveform animation
       _startWaveformAnimation();
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('🎤 Recording...'),
-            duration: const Duration(seconds: 1),
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.only(
-              top: MediaQuery.of(context).padding.top + 10,
-              left: 10,
-              right: 10,
-            ),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
     } catch (e) {
       print('Error starting recording: $e');
     }
@@ -1779,15 +1894,18 @@ class _ChatroomPageState extends State<ChatroomPage> {
   // Stop and send voice (for hold mode)
   Future<void> _stopAndSendVoice() async {
     if (!_isRecording) return;
-    
+
     try {
       final path = await _voiceRecorder.stopRecording();
       setState(() {
         _isRecording = false;
+        _isRecordingLocked = false;
         _micDragOffset = 0.0;
+        _micDragXOffset = 0.0;
+        _cancelRecordingByGesture = false;
         _waveformData = [];
       });
-      
+
       if (path != null && path.isNotEmpty) {
         await _sendVoiceMessage(path);
       }
@@ -1795,7 +1913,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
       print('Error stopping recording: $e');
       setState(() {
         _isRecording = false;
+        _isRecordingLocked = false;
         _micDragOffset = 0.0;
+        _micDragXOffset = 0.0;
+        _cancelRecordingByGesture = false;
       });
     }
   }
@@ -1808,6 +1929,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
       setState(() {
         _isRecordingLocked = true;
         _micDragOffset = 0.0;
+        _micDragXOffset = 0.0;
+        _cancelRecordingByGesture = false;
       });
     } catch (e) {
       print('Error locking recording: $e');
@@ -1823,6 +1946,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
       _isRecording = false;
       _isRecordingLocked = false;
       _micDragOffset = 0.0;
+      _micDragXOffset = 0.0;
+      _cancelRecordingByGesture = false;
       _recordingDuration = Duration.zero;
       _waveformData = [];
     });
@@ -1842,6 +1967,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
       setState(() {
         _isRecording = false;
         _isRecordingLocked = false;
+        _micDragOffset = 0.0;
+        _micDragXOffset = 0.0;
+        _cancelRecordingByGesture = false;
         _recordingDuration = Duration.zero;
         _waveformData = [];
       });
@@ -1852,6 +1980,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
     setState(() {
       _isRecording = false;
       _isRecordingLocked = false;
+      _micDragOffset = 0.0;
+      _micDragXOffset = 0.0;
+      _cancelRecordingByGesture = false;
       _recordingDuration = Duration.zero;
       _waveformData = [];
     });
@@ -1861,7 +1992,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
   void _startWaveformAnimation() {
     Future.doWhile(() async {
       if (!_isRecording) return false;
-      
+
       await Future.delayed(const Duration(milliseconds: 100));
       if (mounted && _isRecording) {
         setState(() {
@@ -1870,7 +2001,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
           if (_waveformData.length >= 30) {
             _waveformData.removeAt(0);
           }
-          _waveformData.add(0.2 + (0.8 * (DateTime.now().millisecond % 100) / 100));
+          _waveformData.add(
+            0.2 + (0.8 * (DateTime.now().millisecond % 100) / 100),
+          );
         });
       }
       return _isRecording;
@@ -1879,7 +2012,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
   Widget _buildWhatsAppInputArea() {
     final hasText = _messageController.text.trim().isNotEmpty;
-    
+    final lockProgress = ((-_micDragOffset) / 80).clamp(0.0, 1.0).toDouble();
+    final cancelProgress = ((-_micDragXOffset) / 120)
+        .clamp(0.0, 1.0)
+        .toDouble();
+
     // Show locked recording UI
     if (_isRecordingLocked) {
       return Container(
@@ -1910,9 +2047,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildWaveform(isLocked: true),
-                    ),
+                    Expanded(child: _buildWaveform(isLocked: true)),
                   ],
                 ),
               ),
@@ -1938,7 +2073,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
         ),
       );
     }
-    
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       color: Colors.white,
@@ -1957,11 +2092,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
                   child: Row(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.emoji_emotions_outlined, color: Colors.grey),
+                        icon: const Icon(
+                          Icons.emoji_emotions_outlined,
+                          color: Colors.grey,
+                        ),
                         onPressed: () {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: const Text('Emoji picker coming soon!', textAlign: TextAlign.center),
+                              content: const Text(
+                                'Emoji picker coming soon!',
+                                textAlign: TextAlign.center,
+                              ),
                               duration: const Duration(seconds: 1),
                               behavior: SnackBarBehavior.floating,
                               margin: EdgeInsets.only(
@@ -1969,7 +2110,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                                 left: 20,
                                 right: 20,
                               ),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                               backgroundColor: Colors.black87,
                             ),
                           );
@@ -2003,7 +2146,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
               // Right-side action: mic when empty, send when has text
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 150),
-                transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
+                transitionBuilder: (child, anim) =>
+                    ScaleTransition(scale: anim, child: child),
                 child: hasText
                     ? Container(
                         key: const ValueKey('send'),
@@ -2012,7 +2156,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
                           shape: BoxShape.circle,
                         ),
                         child: IconButton(
-                          icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                          icon: const Icon(
+                            Icons.send,
+                            color: Colors.white,
+                            size: 20,
+                          ),
                           onPressed: _sendMessage,
                         ),
                       )
@@ -2021,19 +2169,49 @@ class _ChatroomPageState extends State<ChatroomPage> {
                         onLongPressStart: (_) {
                           setState(() {
                             _micDragOffset = 0.0;
+                            _micDragXOffset = 0.0;
+                            _cancelRecordingByGesture = false;
                           });
                           _startVoiceRecording();
                         },
                         onLongPressMoveUpdate: (details) {
+                          final wasLockArmed = _micDragOffset < -60;
+                          final wasCancelArmed = _cancelRecordingByGesture;
+
+                          var nextY = details.offsetFromOrigin.dy;
+                          var nextX = details.offsetFromOrigin.dx;
+
+                          if (nextY < -80) nextY = -80;
+                          if (nextY > 0) nextY = 0;
+
+                          if (nextX < -120) nextX = -120;
+                          if (nextX > 0) nextX = 0;
+
+                          final nextCancelArmed = nextX < -75;
+                          final nextLockArmed = nextY < -60;
+
+                          if (!wasCancelArmed && nextCancelArmed) {
+                            HapticFeedback.mediumImpact();
+                          } else if (!wasLockArmed && nextLockArmed) {
+                            HapticFeedback.selectionClick();
+                          }
+
                           setState(() {
-                            _micDragOffset = details.offsetFromOrigin.dy;
-                            // Clamp offset between -80 and 0
-                            if (_micDragOffset < -80) _micDragOffset = -80;
-                            if (_micDragOffset > 0) _micDragOffset = 0;
+                            _micDragOffset = nextY;
+                            _micDragXOffset = nextX;
+                            _cancelRecordingByGesture = nextCancelArmed;
                           });
                         },
                         onLongPressEnd: (_) {
-                          if (_micDragOffset < -60) {
+                          if (_cancelRecordingByGesture) {
+                            _cancelRecording();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Voice recording canceled'),
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                          } else if (_micDragOffset < -60) {
                             // Locked mode (slid up far enough)
                             _lockRecording();
                           } else {
@@ -2041,17 +2219,42 @@ class _ChatroomPageState extends State<ChatroomPage> {
                             _stopAndSendVoice();
                           }
                         },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _isRecording ? Colors.red : const Color(0xFF075E54),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            _isRecording ? Icons.mic : Icons.mic_none,
-                            color: Colors.white,
-                            size: 22,
+                        child: Transform.translate(
+                          offset: _isRecording
+                              ? Offset(
+                                  _micDragXOffset * 0.22,
+                                  _micDragOffset * 0.22,
+                                )
+                              : Offset.zero,
+                          child: AnimatedScale(
+                            duration: const Duration(milliseconds: 120),
+                            scale: _isRecording ? 1.08 : 1,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: _isRecording
+                                    ? Colors.red
+                                    : const Color(0xFF075E54),
+                                shape: BoxShape.circle,
+                                boxShadow: _isRecording
+                                    ? [
+                                        BoxShadow(
+                                          color: Colors.red.withValues(
+                                            alpha: 0.3,
+                                          ),
+                                          blurRadius: 12,
+                                          spreadRadius: 1,
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: Icon(
+                                _isRecording ? Icons.mic : Icons.mic_none,
+                                color: Colors.white,
+                                size: 22,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -2081,28 +2284,82 @@ class _ChatroomPageState extends State<ChatroomPage> {
                     const SizedBox(width: 12),
                     Column(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          Icons.keyboard_arrow_up,
-                          color: _micDragOffset < -30 ? const Color(0xFF075E54) : Colors.grey,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.keyboard_arrow_up,
+                              color: _micDragOffset < -30
+                                  ? const Color(0xFF075E54)
+                                  : Colors.grey,
+                            ),
+                            const SizedBox(width: 4),
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 120),
+                              height: 4,
+                              width: 56 * lockProgress,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF075E54),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ],
                         ),
                         Text(
-                          _micDragOffset < -30 ? 'Release to lock' : 'Slide up to lock',
+                          _micDragOffset < -30
+                              ? 'Release to lock'
+                              : 'Slide up to lock',
                           style: TextStyle(
                             fontSize: 11,
-                            color: _micDragOffset < -30 ? const Color(0xFF075E54) : Colors.grey,
+                            color: _micDragOffset < -30
+                                ? const Color(0xFF075E54)
+                                : Colors.grey,
                           ),
                         ),
-                        const Text(
-                          'Release to send',
+                        Text(
+                          _cancelRecordingByGesture
+                              ? 'Release to cancel'
+                              : 'Slide left to cancel',
                           style: TextStyle(
                             fontSize: 11,
-                            color: Colors.grey,
+                            color: _cancelRecordingByGesture
+                                ? Colors.red
+                                : Colors.grey,
                           ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.keyboard_arrow_left,
+                              size: 16,
+                              color: _cancelRecordingByGesture
+                                  ? Colors.red
+                                  : Colors.grey,
+                            ),
+                            const SizedBox(width: 4),
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 120),
+                              height: 4,
+                              width: 56 * cancelProgress,
+                              decoration: BoxDecoration(
+                                color: _cancelRecordingByGesture
+                                    ? Colors.red
+                                    : Colors.grey,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                    const SizedBox(width: 60),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.red),
+                      tooltip: 'Cancel recording',
+                      onPressed: _cancelRecording,
+                    ),
                   ],
                 ),
               ),
@@ -2111,31 +2368,29 @@ class _ChatroomPageState extends State<ChatroomPage> {
       ),
     );
   }
-  
+
   // Waveform widget
   Widget _buildWaveform({required bool isLocked}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(
-        isLocked ? 30 : 20,
-        (index) {
-          final amplitude = _waveformData.isNotEmpty && index < _waveformData.length
-              ? _waveformData[index]
-              : 0.3;
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 1),
-            width: 3,
-            height: 20 * amplitude,
-            decoration: BoxDecoration(
-              color: isLocked ? Colors.red : Colors.red.shade400,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          );
-        },
-      ),
+      children: List.generate(isLocked ? 30 : 20, (index) {
+        final amplitude =
+            _waveformData.isNotEmpty && index < _waveformData.length
+            ? _waveformData[index]
+            : 0.3;
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 1),
+          width: 3,
+          height: 20 * amplitude,
+          decoration: BoxDecoration(
+            color: isLocked ? Colors.red : Colors.red.shade400,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        );
+      }),
     );
   }
-  
+
   // Format duration for recording
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -2143,13 +2398,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
     final seconds = twoDigits(duration.inSeconds.remainder(60));
     return '$minutes:$seconds';
   }
-  
+
   Widget _buildWhatsAppMessageBubble(ChatMessage message) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
       child: Row(
-        mainAxisAlignment: message.isMe 
-            ? MainAxisAlignment.end 
+        mainAxisAlignment: message.isMe
+            ? MainAxisAlignment.end
             : MainAxisAlignment.start,
         children: [
           Flexible(
@@ -2162,7 +2417,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 right: message.isMe ? 0 : 50,
               ),
               decoration: BoxDecoration(
-                color: message.isMe 
+                color: message.isMe
                     ? Colors.blue[100]! // WhatsApp light green
                     : Colors.white,
                 borderRadius: BorderRadius.only(
@@ -2180,7 +2435,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 ],
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2204,7 +2462,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         Text(
-                          _formatTime(message.date), // Use date field from new API format
+                          _formatTime(
+                            message.date,
+                          ), // Use date field from new API format
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey[600],
@@ -2237,10 +2497,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
       case MessageType.text:
         return Text(
           message.value, // Use value field from new API format
-          style: const TextStyle(
-            fontSize: 16,
-            color: Colors.black87,
-          ),
+          style: const TextStyle(fontSize: 16, color: Colors.black87),
         );
     }
   }
@@ -2248,7 +2505,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Widget _buildMessageStatusIcon(ChatMessage message) {
     // Show status only for messages sent by current user
     if (!message.isMine) return const SizedBox.shrink();
-    
+
     if (!message.isSent) {
       // Message not sent yet (sending...)
       return const SizedBox(
@@ -2260,19 +2517,21 @@ class _ChatroomPageState extends State<ChatroomPage> {
         ),
       );
     }
-    
+
     // Message sent successfully, show status based on Status field
     final statusLower = message.status.toLowerCase();
-    
+
     // For seen/read messages - Blue double check
-    if (statusLower == 'seen' || statusLower == 'listen' || statusLower == 'watch') {
+    if (statusLower == 'seen' ||
+        statusLower == 'listen' ||
+        statusLower == 'watch') {
       return Icon(
         Icons.done_all,
         size: 16,
         color: Colors.blue[700], // ✓✓ آبی - دیده شده
       );
     }
-    
+
     // For delivered messages - Grey double check
     if (statusLower == 'delivered') {
       return Icon(
@@ -2281,7 +2540,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
         color: Colors.grey[600], // ✓✓ خاکستری - دریافت شده
       );
     }
-    
+
     // For sent but not delivered - Single grey check
     return Icon(
       Icons.done,
@@ -2293,7 +2552,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Widget _buildVoiceMessageWidget(ChatMessage message) {
     final duration = message.duration ?? Duration.zero;
     final isCurrentlyPlaying = message.isPlaying ?? false;
-    
+    final attachmentKey = _attachmentKey(message);
+    final isDownloading = _downloadingAttachmentKeys.contains(attachmentKey);
+    final isDownloaded = _downloadedAttachmentPaths.containsKey(attachmentKey);
+
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -2324,13 +2586,29 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 // Simplified waveform
                 Row(
                   children: List.generate(15, (index) {
-                    final heights = [2.0, 8.0, 4.0, 12.0, 6.0, 10.0, 3.0, 9.0, 5.0, 11.0, 7.0, 4.0, 8.0, 6.0, 3.0];
+                    final heights = [
+                      2.0,
+                      8.0,
+                      4.0,
+                      12.0,
+                      6.0,
+                      10.0,
+                      3.0,
+                      9.0,
+                      5.0,
+                      11.0,
+                      7.0,
+                      4.0,
+                      8.0,
+                      6.0,
+                      3.0,
+                    ];
                     return Container(
                       margin: const EdgeInsets.only(right: 2),
                       width: 3,
                       height: heights[index],
                       decoration: BoxDecoration(
-                        color: isCurrentlyPlaying 
+                        color: isCurrentlyPlaying
                             ? const Color(0xFF075E54)
                             : Colors.grey[400],
                         borderRadius: BorderRadius.circular(1),
@@ -2342,31 +2620,44 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 // Duration
                 Text(
                   _formatDuration(duration),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],
             ),
           ),
-          // Microphone icon
-          Icon(
-            Icons.mic,
-            color: Colors.grey[400],
-            size: 16,
-          ),
+          const SizedBox(width: 8),
+          if (isDownloading)
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.grey[600],
+              ),
+            )
+          else
+            GestureDetector(
+              onTap: () => _downloadMessageAttachment(message),
+              child: Icon(
+                isDownloaded ? Icons.check_circle : Icons.download,
+                color: isDownloaded ? Colors.green : Colors.grey[600],
+                size: 18,
+              ),
+            ),
+          const SizedBox(width: 8),
+          Icon(Icons.mic, color: Colors.grey[400], size: 16),
         ],
       ),
     );
   }
 
   Widget _buildImageMessageWidget(ChatMessage message) {
+    final attachmentKey = _attachmentKey(message);
+    final isDownloading = _downloadingAttachmentKeys.contains(attachmentKey);
+    final isDownloaded = _downloadedAttachmentPaths.containsKey(attachmentKey);
+
     return Container(
-      constraints: const BoxConstraints(
-        maxWidth: 250,
-        maxHeight: 300,
-      ),
+      constraints: const BoxConstraints(maxWidth: 250, maxHeight: 300),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2380,44 +2671,25 @@ class _ChatroomPageState extends State<ChatroomPage> {
             },
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: message.fileUrl != null
-                  ? FutureBuilder<File>(
-                      future: _getCachedImage(message.fileUrl!),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
-                          // Show loading indicator while downloading/caching
-                          return Container(
-                            height: 150,
-                            width: double.infinity,
-                            color: Colors.grey[200],
-                            child: const Center(
-                              child: CircularProgressIndicator(),
-                            ),
-                          );
-                        } else if (snapshot.hasError || !snapshot.hasData) {
-                          // Show error state if download failed
-                          return Container(
-                            height: 150,
-                            width: double.infinity,
-                            color: Colors.grey[200],
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.broken_image, size: 50, color: Colors.grey[400]),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Image not available',
-                                  style: TextStyle(color: Colors.grey[600]),
+              child: Stack(
+                children: [
+                  message.fileUrl != null
+                      ? FutureBuilder<File>(
+                          future: _getCachedImage(message.fileUrl!),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              // Show loading indicator while downloading/caching
+                              return Container(
+                                height: 150,
+                                width: double.infinity,
+                                color: Colors.grey[200],
+                                child: const Center(
+                                  child: CircularProgressIndicator(),
                                 ),
-                              ],
-                            ),
-                          );
-                        } else {
-                          // Display cached image file
-                          return Image.file(
-                            snapshot.data!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
+                              );
+                            } else if (snapshot.hasError || !snapshot.hasData) {
+                              // Show error state if download failed
                               return Container(
                                 height: 150,
                                 width: double.infinity,
@@ -2425,29 +2697,104 @@ class _ChatroomPageState extends State<ChatroomPage> {
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.broken_image, size: 50, color: Colors.grey[400]),
+                                    Icon(
+                                      Icons.broken_image,
+                                      size: 50,
+                                      color: Colors.grey[400],
+                                    ),
                                     const SizedBox(height: 8),
                                     Text(
-                                      'Image error',
+                                      'Image not available',
                                       style: TextStyle(color: Colors.grey[600]),
                                     ),
                                   ],
                                 ),
                               );
-                            },
-                          );
-                        }
-                      },
-                    )
-                : Container(
-                    height: 150,
-                    width: double.infinity,
-                    color: Colors.grey[200],
-                    child: Icon(Icons.image, size: 50, color: Colors.grey[400]),
-                  ),
+                            } else {
+                              // Display cached image file
+                              return Image.file(
+                                snapshot.data!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    height: 150,
+                                    width: double.infinity,
+                                    color: Colors.grey[200],
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.broken_image,
+                                          size: 50,
+                                          color: Colors.grey[400],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Image error',
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              );
+                            }
+                          },
+                        )
+                      : Container(
+                          height: 150,
+                          width: double.infinity,
+                          color: Colors.grey[200],
+                          child: Icon(
+                            Icons.image,
+                            size: 50,
+                            color: Colors.grey[400],
+                          ),
+                        ),
+                  if (message.fileUrl != null)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Material(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(16),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: isDownloading
+                              ? null
+                              : () => _downloadMessageAttachment(message),
+                          child: Padding(
+                            padding: EdgeInsets.all(6),
+                            child: isDownloading
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : Icon(
+                                    isDownloaded
+                                        ? Icons.check_circle
+                                        : Icons.download,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
-          if (message.value.isNotEmpty && message.value != 'Photo' && message.value != 'Image')
+          if (message.value.isNotEmpty &&
+              message.value != 'Photo' &&
+              message.value != 'Image')
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
@@ -2464,7 +2811,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Future<File> _getCachedImage(String imageUrl) async {
     final token = await ApiService.getAuthToken();
     final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
-    
+
     final filePath = await FileCacheService.getFile(imageUrl, headers: headers);
     if (filePath == null) {
       throw Exception('Failed to download image');
@@ -2473,6 +2820,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 
   Widget _buildFileMessageWidget(ChatMessage message) {
+    final attachmentKey = _attachmentKey(message);
+    final isDownloading = _downloadingAttachmentKeys.contains(attachmentKey);
+    final isDownloaded = _downloadedAttachmentPaths.containsKey(attachmentKey);
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -2488,7 +2839,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
               color: Colors.blue[100],
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Icon(Icons.insert_drive_file, color: Colors.blue[700], size: 24),
+            child: Icon(
+              Icons.insert_drive_file,
+              color: Colors.blue[700],
+              size: 24,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2505,53 +2860,189 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Document',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
+                  isDownloading
+                      ? 'Downloading...'
+                      : isDownloaded
+                      ? 'Saved to device'
+                      : 'Document',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],
             ),
           ),
-          IconButton(
-            icon: Icon(Icons.download, color: Colors.grey[600]),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('File download not implemented yet'),
+          isDownloading
+              ? Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                )
+              : IconButton(
+                  icon: Icon(
+                    isDownloaded ? Icons.check_circle : Icons.download,
+                    color: isDownloaded ? Colors.green : Colors.grey[600],
+                  ),
+                  onPressed: () {
+                    _downloadMessageAttachment(message);
+                  },
                 ),
-              );
-            },
-          ),
         ],
       ),
     );
   }
 
+  String _attachmentKey(ChatMessage message) {
+    return '${message.id}_${message.fileUrl ?? ''}_${message.messageType.name}';
+  }
+
+  Future<Directory> _resolveDownloadDirectory() async {
+    final downloadsDir = await getDownloadsDirectory();
+    if (downloadsDir != null) {
+      if (!await downloadsDir.exists()) {
+        await downloadsDir.create(recursive: true);
+      }
+      return downloadsDir;
+    }
+
+    final appDir = await getApplicationDocumentsDirectory();
+    final fallbackDir = Directory('${appDir.path}/downloads');
+    if (!await fallbackDir.exists()) {
+      await fallbackDir.create(recursive: true);
+    }
+    return fallbackDir;
+  }
+
+  String _extractFileName(String fileUrl, MessageType type) {
+    try {
+      final uri = Uri.parse(fileUrl);
+      final fromUrl = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
+      if (fromUrl.isNotEmpty && fromUrl.contains('.')) {
+        return fromUrl;
+      }
+    } catch (_) {}
+
+    switch (type) {
+      case MessageType.image:
+        return 'chat_image_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      case MessageType.voice:
+        return 'chat_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      default:
+        return 'chat_file_${DateTime.now().millisecondsSinceEpoch}';
+    }
+  }
+
+  Future<void> _downloadMessageAttachment(ChatMessage message) async {
+    if (message.fileUrl == null || message.fileUrl!.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No file available for download')),
+      );
+      return;
+    }
+
+    final attachmentKey = _attachmentKey(message);
+
+    if (_downloadingAttachmentKeys.contains(attachmentKey)) {
+      return;
+    }
+
+    final existingPath = _downloadedAttachmentPaths[attachmentKey];
+    if (existingPath != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Already saved: $existingPath')));
+      return;
+    }
+
+    setState(() {
+      _downloadingAttachmentKeys.add(attachmentKey);
+    });
+
+    try {
+      final token = await ApiService.getAuthToken();
+      final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
+      final sourcePath = await FileCacheService.getFile(
+        message.fileUrl!,
+        headers: headers,
+      );
+
+      if (sourcePath == null) {
+        throw Exception('Download failed');
+      }
+
+      final downloadsDir = await _resolveDownloadDirectory();
+      final sourceFile = File(sourcePath);
+      final originalName = _extractFileName(
+        message.fileUrl!,
+        message.messageType,
+      );
+      var targetPath = '${downloadsDir.path}/$originalName';
+      var counter = 1;
+
+      while (await File(targetPath).exists()) {
+        final dotIndex = originalName.lastIndexOf('.');
+        final baseName = dotIndex > 0
+            ? originalName.substring(0, dotIndex)
+            : originalName;
+        final extension = dotIndex > 0 ? originalName.substring(dotIndex) : '';
+        targetPath = '${downloadsDir.path}/${baseName}_$counter$extension';
+        counter++;
+      }
+
+      await sourceFile.copy(targetPath);
+
+      setState(() {
+        _downloadingAttachmentKeys.remove(attachmentKey);
+        _downloadedAttachmentPaths[attachmentKey] = targetPath;
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved to: $targetPath')));
+    } catch (e) {
+      setState(() {
+        _downloadingAttachmentKeys.remove(attachmentKey);
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Download failed: $e')));
+    }
+  }
+
   void _toggleVoicePlayback(ChatMessage message) async {
     print('🎵 _toggleVoicePlayback called: fileUrl=${message.fileUrl}');
-    
+
     if (message.fileUrl == null) return;
-    
+
     final isCurrentlyPlaying = message.isPlaying ?? false;
-    
+
     if (isCurrentlyPlaying) {
       await _voiceRecorder.pauseVoiceMessage();
     } else {
       // Get authentication token for API downloads
       final token = await ApiService.getAuthToken();
       final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
-      
+
       // Play voice message from URL (will be cached automatically)
-      await _voiceRecorder.playVoiceMessageFromUrl(message.fileUrl!, headers: headers);
-      
+      await _voiceRecorder.playVoiceMessageFromUrl(
+        message.fileUrl!,
+        headers: headers,
+      );
+
       // Mark voice message as listened when played (only if it's not from current user)
       if (!message.isMe && message.messageId != null) {
         await _markVoiceAsListened(message.messageId!);
       }
     }
-    
+
     // Update the message playing state
     setState(() {
       final messageIndex = _messages.indexOf(message);
@@ -2616,9 +3107,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 
   bool _isSameDay(DateTime date1, DateTime date2) {
-    return date1.year == date2.year && 
-           date1.month == date2.month && 
-           date1.day == date2.day;
+    return date1.year == date2.year &&
+        date1.month == date2.month &&
+        date1.day == date2.day;
   }
 
   String _formatTime(DateTime dateTime) {
@@ -2650,29 +3141,24 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 }
 
-enum MessageType {
-  text,
-  image,
-  file,
-  voice,
-}
+enum MessageType { text, image, file, voice }
 
 class ChatMessage {
-  final int id;            // Message ID from API
-  final String value;      // Message text content
-  final String? fileUrl;   // Full file URL
+  final int id; // Message ID from API
+  final String value; // Message text content
+  final String? fileUrl; // Full file URL
   final String? fileUrlThumb; // Thumbnail URL for files
-  final DateTime date;     // Message date
-  final int userId;        // Sender's user ID
-  final bool isSent;       // Whether message was sent successfully
-  final String status;     // Message status (None, Delivered, Seen, etc.)
-  final bool isMine;       // Whether current user sent this message
-  
+  final DateTime date; // Message date
+  final int userId; // Sender's user ID
+  final bool isSent; // Whether message was sent successfully
+  final String status; // Message status (None, Delivered, Seen, etc.)
+  final bool isMine; // Whether current user sent this message
+
   // Additional UI properties
   final String sender;
   final MessageType messageType;
   final Duration? duration; // For voice messages
-  final bool? isPlaying;   // For voice message playback state
+  final bool? isPlaying; // For voice message playback state
 
   ChatMessage({
     required this.id,
@@ -2689,7 +3175,7 @@ class ChatMessage {
     this.duration,
     this.isPlaying,
   });
-  
+
   // Backward compatibility getters
   String get message => value;
   DateTime get timestamp => date;
