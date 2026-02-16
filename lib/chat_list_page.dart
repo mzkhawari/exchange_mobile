@@ -1,6 +1,7 @@
-import 'dart:io';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'services/api_service.dart';
+import 'services/avatar_cache_service.dart';
 import 'services/local_users_db_service.dart';
 import 'chatroom_page.dart';
 
@@ -16,12 +17,10 @@ class _ChatListPageState extends State<ChatListPage> {
   List<Map<String, dynamic>> _users = [];
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  String? _authToken;
 
   @override
   void initState() {
     super.initState();
-    _loadAuthToken();
     _loadUsers();
   }
 
@@ -31,15 +30,10 @@ class _ChatListPageState extends State<ChatListPage> {
     super.dispose();
   }
 
-  Future<void> _loadAuthToken() async {
-    final token = await ApiService.getAuthToken();
-    if (!mounted) return;
-    setState(() => _authToken = token);
-  }
-
   Future<void> _loadUsers() async {
     try {
       final transformed = await LocalUsersDbService.getUsers();
+      unawaited(AvatarCacheService.warmUpUsersAvatars(transformed));
       setState(() {
         _users = transformed;
         _loading = false;
@@ -58,6 +52,32 @@ class _ChatListPageState extends State<ChatListPage> {
     final h = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');
     return '$h:$m';
+  }
+
+  Widget _buildCachedAvatar({
+    required String avatarPath,
+    required String name,
+  }) {
+    return FutureBuilder<ImageProvider?>(
+      future: AvatarCacheService.getAvatarImageProvider(avatarPath),
+      builder: (context, snapshot) {
+        final provider = snapshot.data;
+        return CircleAvatar(
+          radius: 25,
+          backgroundColor: const Color(0xFF0C8B7D),
+          backgroundImage: provider,
+          child: provider == null
+              ? Text(
+                  name.isNotEmpty ? name[0].toUpperCase() : '?',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                )
+              : null,
+        );
+      },
+    );
   }
 
   Widget _buildChatUserCard(Map<String, dynamic> user) {
@@ -104,34 +124,7 @@ class _ChatListPageState extends State<ChatListPage> {
               children: [
                 Stack(
                   children: [
-                    CircleAvatar(
-                      radius: 25,
-                      backgroundColor: const Color(0xFF0C8B7D),
-                      backgroundImage: () {
-                        final url = ApiService.getFullAvatarUrl(avatarUrl);
-                        if (url == null) return null;
-                        final token = _authToken;
-                        final headers = (token == null || token.isEmpty)
-                            ? null
-                            : {
-                                HttpHeaders.authorizationHeader:
-                                    'Bearer $token',
-                              };
-                        return NetworkImage(url, headers: headers);
-                      }(),
-                      child: () {
-                        final url = ApiService.getFullAvatarUrl(avatarUrl);
-                        return url == null
-                            ? Text(
-                                name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              )
-                            : null;
-                      }(),
-                    ),
+                    _buildCachedAvatar(avatarPath: avatarUrl, name: name),
                     Positioned(
                       right: 0,
                       bottom: 0,

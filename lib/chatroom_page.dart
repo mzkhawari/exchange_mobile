@@ -11,6 +11,7 @@ import 'services/file_cache_service.dart';
 import 'services/local_users_db_service.dart';
 import 'services/pending_chat_queue_service.dart';
 import 'services/chat_sync_service.dart';
+import 'services/avatar_cache_service.dart';
 
 class ChatroomPage extends StatefulWidget {
   final Map<String, dynamic>? initialUser;
@@ -175,6 +176,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     try {
       setState(() => _isLoadingUsers = true);
       final cachedUsers = await LocalUsersDbService.getUsers();
+      unawaited(AvatarCacheService.warmUpUsersAvatars(cachedUsers));
       if (!mounted) return;
       setState(() {
         _availableUsers = cachedUsers;
@@ -195,6 +197,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
   Future<void> _refreshUsersFromLocalDb() async {
     final cachedUsers = await LocalUsersDbService.getUsers();
+    unawaited(AvatarCacheService.warmUpUsersAvatars(cachedUsers));
     if (!mounted) return;
     setState(() {
       _availableUsers = cachedUsers;
@@ -222,8 +225,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 
   Future<void> _startBackgroundChatSync() async {
+    final targetUserId = int.tryParse('${_selectedUser?['id'] ?? ''}');
+    final lastMessageId = targetUserId != null
+        ? await _resolveLastMessageIdForChat(targetUserId)
+        : null;
     await ChatSyncService.start(
-      interval: const Duration(seconds: 30),
+      targetUserId: targetUserId,
+      lastMessageId: lastMessageId,
       onSynced: () async {
         if (!mounted) return;
         await _refreshUsersFromLocalDb();
@@ -245,10 +253,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
         final myUserId = int.tryParse('${_userInfo?['id'] ?? ''}');
         if (myUserId != null && targetUserId == myUserId) continue;
 
-        final lastMsgId =
-            await LocalUsersDbService.getLastCachedMessageIdForUser(
-              targetUserId,
-            );
+        final lastMsgId = await _resolveLastMessageIdForChat(targetUserId);
         final response = await ApiService.getChatDetails(
           targetUserId,
           msgId: lastMsgId,
@@ -300,10 +305,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     if (_userInfo != null && selectedUserId != null) {
       try {
         final targetUserId = selectedUserId;
-        final lastMsgId =
-            await LocalUsersDbService.getLastCachedMessageIdForUser(
-              targetUserId,
-            );
+        final lastMsgId = await _resolveLastMessageIdForChat(targetUserId);
 
         // Fetch by target user id; msgId is per-chat based on local cache
         final response = await ApiService.getChatDetails(
@@ -387,6 +389,43 @@ class _ChatroomPageState extends State<ChatroomPage> {
       });
       _scrollToBottom();
     }
+  }
+
+  Future<int?> _resolveLastMessageIdForChat(int targetUserId) async {
+    int? selectedUserLastMessageId;
+    final selectedUserId = int.tryParse('${_selectedUser?['id'] ?? ''}');
+    if (selectedUserId == targetUserId) {
+      selectedUserLastMessageId = int.tryParse(
+        '${_selectedUser?['lastMessageId'] ?? ''}',
+      );
+    }
+
+    int? availableUserLastMessageId;
+    final matchedUser = _availableUsers.where((u) {
+      final userId = int.tryParse('${u['id'] ?? ''}');
+      return userId == targetUserId;
+    }).cast<Map<String, dynamic>>().toList();
+    if (matchedUser.isNotEmpty) {
+      availableUserLastMessageId = int.tryParse(
+        '${matchedUser.first['lastMessageId'] ?? ''}',
+      );
+    }
+
+    final localDbLastMessageId =
+        await LocalUsersDbService.getLastCachedMessageIdForUser(targetUserId);
+
+    final candidates = <int>[
+      if (selectedUserLastMessageId != null && selectedUserLastMessageId > 0)
+        selectedUserLastMessageId,
+      if (availableUserLastMessageId != null && availableUserLastMessageId > 0)
+        availableUserLastMessageId,
+      if (localDbLastMessageId != null && localDbLastMessageId > 0)
+        localDbLastMessageId,
+    ];
+
+    if (candidates.isEmpty) return null;
+    candidates.sort();
+    return candidates.last;
   }
 
   ChatMessage _mapStoredMessageToChatMessage(Map<String, dynamic> msg) {
@@ -1485,70 +1524,12 @@ class _ChatroomPageState extends State<ChatroomPage> {
               children: [
                 Stack(
                   children: [
-                    ClipRRect(
+                    _buildCachedAvatarBox(
+                      avatarPath: avatarUrl,
+                      fullName: fullName,
+                      size: 50,
                       borderRadius: BorderRadius.circular(25),
-                      child: Container(
-                        width: 50,
-                        height: 50,
-                        color: Theme.of(context).primaryColor,
-                        child: () {
-                          final url = ApiService.getFullAvatarUrl(avatarUrl);
-                          return url != null
-                              ? Image.network(
-                                  url,
-                                  width: 50,
-                                  height: 50,
-                                  fit: BoxFit.cover,
-                                  loadingBuilder:
-                                      (context, child, loadingProgress) {
-                                        if (loadingProgress == null)
-                                          return child;
-                                        return const Center(
-                                          child: SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(
-                                                    Colors.white,
-                                                  ),
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                  errorBuilder: (context, error, stackTrace) {
-                                    print(
-                                      'Error loading avatar for $fullName: $error',
-                                    );
-                                    return Center(
-                                      child: Text(
-                                        fullName.isNotEmpty
-                                            ? fullName[0].toUpperCase()
-                                            : '?',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 18,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                )
-                              : Center(
-                                  child: Text(
-                                    fullName.isNotEmpty
-                                        ? fullName[0].toUpperCase()
-                                        : '?',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 18,
-                                    ),
-                                  ),
-                                );
-                        }(),
-                      ),
+                      backgroundColor: Theme.of(context).primaryColor,
                     ),
                     if (isOnline)
                       Positioned(
@@ -1669,64 +1650,12 @@ class _ChatroomPageState extends State<ChatroomPage> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(28),
-                child: Container(
-                  width: 56,
-                  height: 56,
-                  color: const Color(0xFF075E54),
-                  child: () {
-                    final url = ApiService.getFullAvatarUrl(avatarUrl);
-                    return url != null
-                        ? Image.network(
-                            url,
-                            width: 56,
-                            height: 56,
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return const Center(
-                                child: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                            errorBuilder: (context, error, stackTrace) {
-                              print(
-                                'Error loading avatar for $fullName: $error',
-                              );
-                              return Center(
-                                child: Text(
-                                  fullName.isNotEmpty
-                                      ? fullName[0].toUpperCase()
-                                      : '?',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 18,
-                                  ),
-                                ),
-                              );
-                            },
-                          )
-                        : Center(
-                            child: Text(
-                              fullName.isNotEmpty
-                                  ? fullName[0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                              ),
-                            ),
-                          );
-                  }(),
+                child: _buildCachedAvatarBox(
+                  avatarPath: avatarUrl,
+                  fullName: fullName,
+                  size: 56,
+                  borderRadius: BorderRadius.circular(28),
+                  backgroundColor: const Color(0xFF075E54),
                 ),
               ),
               if (unreadCount > 0)
@@ -1760,6 +1689,59 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAvatarFallback(String fullName, {double fontSize = 18}) {
+    return Center(
+      child: Text(
+        fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: fontSize,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCachedAvatarBox({
+    required String avatarPath,
+    required String fullName,
+    required double size,
+    required BorderRadius borderRadius,
+    required Color backgroundColor,
+    double fallbackFontSize = 18,
+  }) {
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: Container(
+        width: size,
+        height: size,
+        color: backgroundColor,
+        child: FutureBuilder<ImageProvider?>(
+          future: AvatarCacheService.getAvatarImageProvider(avatarPath),
+          builder: (context, snapshot) {
+            final provider = snapshot.data;
+            if (provider == null) {
+              return _buildAvatarFallback(fullName, fontSize: fallbackFontSize);
+            }
+
+            return Image(
+              image: provider,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return _buildAvatarFallback(
+                  fullName,
+                  fontSize: fallbackFontSize,
+                );
+              },
+            );
+          },
         ),
       ),
     );
@@ -1863,26 +1845,28 @@ class _ChatroomPageState extends State<ChatroomPage> {
             ),
           Stack(
             children: [
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: Colors.white,
-                backgroundImage: () {
-                  final url = ApiService.getFullAvatarUrl(avatarUrl);
-                  return url != null ? NetworkImage(url) : null;
-                }(),
-                child: () {
-                  final url = ApiService.getFullAvatarUrl(avatarUrl);
-                  return url == null
-                      ? Text(
-                          fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                          style: TextStyle(
-                            color: Theme.of(context).primaryColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        )
-                      : null;
-                }(),
+              FutureBuilder<ImageProvider?>(
+                future: AvatarCacheService.getAvatarImageProvider(avatarUrl),
+                builder: (context, snapshot) {
+                  final provider = snapshot.data;
+                  return CircleAvatar(
+                    radius: 20,
+                    backgroundColor: Colors.white,
+                    backgroundImage: provider,
+                    child: provider == null
+                        ? Text(
+                            fullName.isNotEmpty
+                                ? fullName[0].toUpperCase()
+                                : '?',
+                            style: TextStyle(
+                              color: Theme.of(context).primaryColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          )
+                        : null,
+                  );
+                },
               ),
               if (isOnline)
                 Positioned(

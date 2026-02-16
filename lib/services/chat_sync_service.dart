@@ -1,29 +1,29 @@
-import 'dart:async';
-
 import 'api_service.dart';
 import 'local_users_db_service.dart';
 
 class ChatSyncService {
-  static Timer? _timer;
   static bool _isSyncing = false;
 
   static Future<void> start({
-    Duration interval = const Duration(seconds: 30),
+    int? targetUserId,
+    int? lastMessageId,
     Future<void> Function()? onSynced,
   }) async {
     stop();
-    await _syncOnce(onSynced: onSynced);
-    _timer = Timer.periodic(interval, (_) {
-      _syncOnce(onSynced: onSynced);
-    });
+    await _syncOnce(
+      targetUserId: targetUserId,
+      lastMessageId: lastMessageId,
+      onSynced: onSynced,
+    );
   }
 
-  static void stop() {
-    _timer?.cancel();
-    _timer = null;
-  }
+  static void stop() {}
 
-  static Future<void> _syncOnce({Future<void> Function()? onSynced}) async {
+  static Future<void> _syncOnce({
+    int? targetUserId,
+    int? lastMessageId,
+    Future<void> Function()? onSynced,
+  }) async {
     if (_isSyncing) return;
 
     _isSyncing = true;
@@ -32,43 +32,57 @@ class ChatSyncService {
       final isLoggedIn = await ApiService.isLoggedIn();
       if (!isLoggedIn) return;
 
-      final users = await LocalUsersDbService.getUsers();
-      if (users.isEmpty) return;
-
-      for (final user in users) {
-        final targetUserId = int.tryParse('${user['id'] ?? ''}');
-        if (targetUserId == null || targetUserId <= 0) continue;
-
-        final lastMsgId =
-            await LocalUsersDbService.getLastCachedMessageIdForUser(
-              targetUserId,
-            );
-
-        final response = await ApiService.getChatDetails(
-          targetUserId,
-          msgId: lastMsgId,
-        );
-        if (response == null) continue;
-
-        final messages =
-            response['messages'] as List<Map<String, dynamic>>? ?? const [];
-        if (messages.isEmpty) continue;
-
-        await LocalUsersDbService.cacheMessagesForUserChat(
-          userId: targetUserId,
-          messages: messages.map(_mapApiMessageToCachePayload).toList(),
-        );
-        hasUpdates = true;
+      if (targetUserId != null && targetUserId > 0) {
+        hasUpdates =
+            await _syncUser(targetUserId, lastMessageId: lastMessageId) ||
+            hasUpdates;
+        if (hasUpdates && onSynced != null) {
+          await onSynced();
+        }
+        return;
       }
 
-      if (hasUpdates && onSynced != null) {
-        await onSynced();
-      }
+      return;
     } catch (e) {
       print('ChatSyncService sync error: $e');
     } finally {
       _isSyncing = false;
     }
+  }
+
+  static Future<bool> _syncUser(
+    int targetUserId, {
+    int? lastMessageId,
+  }) async {
+    final dbLastMessageId =
+        await LocalUsersDbService.getLastCachedMessageIdForUser(
+      targetUserId,
+    );
+    var lastMsgId = (lastMessageId != null && lastMessageId > 0)
+        ? lastMessageId
+        : null;
+
+    if (dbLastMessageId != null && dbLastMessageId > 0) {
+      if (lastMsgId == null || dbLastMessageId > lastMsgId) {
+        lastMsgId = dbLastMessageId;
+      }
+    }
+
+    final response = await ApiService.getChatDetails(
+      targetUserId,
+      msgId: lastMsgId,
+    );
+    if (response == null) return false;
+
+    final messages =
+        response['messages'] as List<Map<String, dynamic>>? ?? const [];
+    if (messages.isEmpty) return false;
+
+    await LocalUsersDbService.cacheMessagesForUserChat(
+      userId: targetUserId,
+      messages: messages.map(_mapApiMessageToCachePayload).toList(),
+    );
+    return true;
   }
 
   static Map<String, dynamic> _mapApiMessageToCachePayload(

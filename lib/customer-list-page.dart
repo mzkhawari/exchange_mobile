@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'services/avatar_cache_service.dart';
 
 class CustomerListPage extends StatefulWidget {
   const CustomerListPage({super.key});
@@ -121,6 +123,7 @@ class _CustomerListPageState extends State<CustomerListPage> {
           dataList = result['data'] ?? [];
           totalCount = result['count'] ?? 0;
         });
+        unawaited(_warmUpCustomerAvatars(dataList));
       }
     } catch (e) {
       debugPrint("❌ Error fetching data: $e");
@@ -130,6 +133,57 @@ class _CustomerListPageState extends State<CustomerListPage> {
     } finally {
       setState(() => isLoading = false);
     }
+  }
+
+  String? _normalizeCustomerAvatarPath(dynamic rawPath) {
+    if (rawPath == null) return null;
+    final value = rawPath.toString().trim();
+    if (value.isEmpty || value.toLowerCase() == 'null') return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+
+    final normalized = value.startsWith('/') ? value : '/$value';
+    return '$baseUrlImages$normalized';
+  }
+
+  Future<void> _warmUpCustomerAvatars(List<dynamic> customers) async {
+    final users = customers
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .map((item) {
+          final avatar =
+              _normalizeCustomerAvatarPath(
+                item['picUrlAvatarThumb'] ?? item['picUrlAvatar'],
+              ) ??
+              '';
+          return <String, dynamic>{'picUrlAvatar': avatar};
+        })
+        .where((item) => (item['picUrlAvatar'] as String).isNotEmpty)
+        .toList();
+
+    if (users.isEmpty) return;
+    await AvatarCacheService.warmUpUsersAvatars(users);
+  }
+
+  Widget _buildCachedAvatar({
+    required String? avatarPath,
+    required double radius,
+    required Widget fallback,
+    Color? backgroundColor,
+  }) {
+    return FutureBuilder<ImageProvider?>(
+      future: AvatarCacheService.getAvatarImageProvider(avatarPath),
+      builder: (context, snapshot) {
+        final provider = snapshot.data;
+        return CircleAvatar(
+          radius: radius,
+          backgroundColor: backgroundColor,
+          backgroundImage: provider,
+          child: provider == null ? fallback : null,
+        );
+      },
+    );
   }
 
   void onAddCustomer() {
@@ -213,9 +267,17 @@ class _CustomerListPageState extends State<CustomerListPage> {
                         // Profile picture
                         if (customer['picUrlAvatar'] != null)
                           Center(
-                            child: CircleAvatar(
+                            child: _buildCachedAvatar(
+                              avatarPath: _normalizeCustomerAvatarPath(
+                                customer['picUrlAvatar'],
+                              ),
                               radius: 50,
-                              backgroundImage: NetworkImage(baseUrlImages + customer['picUrlAvatar']),
+                              fallback: const Icon(
+                                Icons.person,
+                                size: 44,
+                                color: Colors.white,
+                              ),
+                              backgroundColor: Colors.blueGrey,
                             ),
                           ),
                         const SizedBox(height: 16),
@@ -693,12 +755,18 @@ class _CustomerListPageState extends State<CustomerListPage> {
                   child: CircleAvatar(
                     radius: 30,
                     backgroundColor: Colors.transparent,
-                    backgroundImage: item['picUrlAvatarThumb'] != null
-                        ? NetworkImage(baseUrlImages + item['picUrlAvatarThumb'])
-                        : null,
-                    child: item['picUrlAvatarThumb'] == null
-                        ? const Icon(Icons.person, size: 30, color: Colors.white)
-                        : null,
+                    child: _buildCachedAvatar(
+                      avatarPath: _normalizeCustomerAvatarPath(
+                        item['picUrlAvatarThumb'],
+                      ),
+                      radius: 30,
+                      fallback: const Icon(
+                        Icons.person,
+                        size: 30,
+                        color: Colors.white,
+                      ),
+                      backgroundColor: Colors.transparent,
+                    ),
                   ),
                 ),
                 

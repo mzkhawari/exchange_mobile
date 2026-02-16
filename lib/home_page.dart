@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +10,7 @@ import 'chat_list_page.dart';
 import 'settings_page.dart';
 import 'add_transfer_page.dart';
 import 'services/api_service.dart';
+import 'services/avatar_cache_service.dart';
 import 'flutter_login_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -49,6 +51,10 @@ class _HomePageState extends State<HomePage> {
         _userName = userData['firstName'] ?? '';
         _avatarUrl = ApiService.getFullAvatarUrl(rawAvatarPath?.toString());
       });
+
+      if (_avatarUrl != null) {
+        unawaited(AvatarCacheService.getAvatarImageProvider(_avatarUrl));
+      }
     }
   }
 
@@ -242,15 +248,23 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 30,
-            backgroundColor: Colors.teal[50],
-            backgroundImage: _avatarUrl != null
-                ? NetworkImage(_avatarUrl!)
-                : null,
-            child: _avatarUrl == null
-                ? Icon(Icons.account_circle, color: Colors.teal[700], size: 36)
-                : null,
+          FutureBuilder<ImageProvider?>(
+            future: AvatarCacheService.getAvatarImageProvider(_avatarUrl),
+            builder: (context, snapshot) {
+              final provider = snapshot.data;
+              return CircleAvatar(
+                radius: 30,
+                backgroundColor: Colors.teal[50],
+                backgroundImage: provider,
+                child: provider == null
+                    ? Icon(
+                        Icons.account_circle,
+                        color: Colors.teal[700],
+                        size: 36,
+                      )
+                    : null,
+              );
+            },
           ),
           const SizedBox(width: 12),
           Expanded(

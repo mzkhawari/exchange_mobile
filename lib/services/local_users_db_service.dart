@@ -147,6 +147,7 @@ class LocalUsersDbService {
         'lastMessage': (latestText != null && latestText.trim().isNotEmpty)
             ? latestText
             : (row['lastMessage'] ?? 'Available for chat'),
+        'lastMessageId': latest?['messageId'],
         'lastMessageTime': lastMessageTime,
         'unreadCount': unreadCount,
       };
@@ -341,7 +342,7 @@ class LocalUsersDbService {
   ) async {
     final rows = await db.query(
       _tableMessages,
-      columns: ['peerUserId', 'value', 'dateMillis'],
+      columns: ['peerUserId', 'messageId', 'value', 'dateMillis'],
       orderBy: 'peerUserId ASC, dateMillis DESC',
     );
 
