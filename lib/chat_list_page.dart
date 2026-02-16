@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'services/api_service.dart';
+import 'services/local_users_db_service.dart';
 import 'chatroom_page.dart';
 
 class ChatListPage extends StatefulWidget {
@@ -38,35 +39,7 @@ class _ChatListPageState extends State<ChatListPage> {
 
   Future<void> _loadUsers() async {
     try {
-      final users = await ApiService.getAllUsers();
-      final transformed = users.map<Map<String, dynamic>>((u) {
-        return {
-          'id': u['id'] ?? 0,
-          'firstName': u['firstName'] ?? 'Unknown',
-          'lastName': u['lastName'] ?? 'User',
-          'fullName': (u['fullName'] ?? '').toString().isNotEmpty
-              ? u['fullName']
-              : '${u['firstName'] ?? ''} ${u['lastName'] ?? ''}'.trim(),
-          'userName': u['userName'] ?? u['username'] ?? '',
-          'mobile':
-              u['mobile'] ??
-              u['mobileNo'] ??
-              u['phoneNumber'] ??
-              u['phone'] ??
-              '',
-          'picUrlAvatar':
-              u['picUrlAvatar'] ??
-              u['picUrlAvatarThumb'] ??
-              u['avatarUrl'] ??
-              u['avatar'] ??
-              u['profileImage'] ??
-              '',
-          'lastMessage': u['lastMessage'] ?? 'Available for chat',
-          'lastMessageTime': DateTime.now(),
-          'unreadCount': u['unreadCount'] ?? 0,
-          'isOnline': true,
-        };
-      }).toList();
+      final transformed = await LocalUsersDbService.getUsers();
       setState(() {
         _users = transformed;
         _loading = false;
@@ -115,14 +88,15 @@ class _ChatListPageState extends State<ChatListPage> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
-          onTap: () {
-            Navigator.push(
+          onTap: () async {
+            await Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (_) =>
                     ChatroomPage(initialUser: user, standalone: true),
               ),
             );
+            await _loadUsers();
           },
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

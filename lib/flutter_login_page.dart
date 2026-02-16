@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'home_page.dart'; // صفحه بعد از لاگین
 import 'services/api_service.dart';
+import 'services/local_users_db_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -43,7 +44,7 @@ class _LoginPageState extends State<LoginPage> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         print('Login response: $data'); // Debug print
-      
+
         // Check if we received a token
         String? token;
         String? refreshToken;
@@ -51,10 +52,12 @@ class _LoginPageState extends State<LoginPage> {
           // Handle both string token and object token
           if (data['token'] is String) {
             token = data['token'];
-          } else if (data['token'] is Map && data['token']['accessToken'] != null) {
+          } else if (data['token'] is Map &&
+              data['token']['accessToken'] != null) {
             token = data['token']['accessToken'];
             refreshToken = data['token']['refreshToken']?.toString();
-          } else if (data['token'] is Map && data['token']['access_token'] != null) {
+          } else if (data['token'] is Map &&
+              data['token']['access_token'] != null) {
             token = data['token']['access_token'];
             refreshToken = data['token']['refresh_token']?.toString();
           } else {
@@ -64,7 +67,7 @@ class _LoginPageState extends State<LoginPage> {
 
         refreshToken ??= data['refreshToken']?.toString();
         refreshToken ??= data['refresh_token']?.toString();
-        
+
         if (token != null && token.isNotEmpty) {
           // Save the token using ApiService
           await ApiService.setAuthToken(token);
@@ -72,14 +75,14 @@ class _LoginPageState extends State<LoginPage> {
           if (refreshToken != null && refreshToken.isNotEmpty) {
             await ApiService.setRefreshToken(refreshToken);
           }
-          
+
           // Save login response data first
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('login_response', jsonEncode(data));
-          
+
           // Try to get user info using the token
           final userInfo = await ApiService.getUserInfo();
-          
+
           String welcomeName = 'User';
           if (userInfo != null) {
             // Save complete user data if API call succeeds
@@ -90,7 +93,13 @@ class _LoginPageState extends State<LoginPage> {
             await prefs.setString('user_data', jsonEncode(data['currentUser']));
             welcomeName = data['currentUser']['firstName'] ?? 'User';
           }
-          
+
+          try {
+            await LocalUsersDbService.syncUsersFromApi();
+          } catch (e) {
+            debugPrint('Users sync after login failed: $e');
+          }
+
           // Show success message
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -100,7 +109,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
             );
           }
-          
+
           // Navigate to home page - always navigate if login successful
           if (mounted) {
             Navigator.pushReplacement(
@@ -117,7 +126,8 @@ class _LoginPageState extends State<LoginPage> {
         // Handle different error codes
         final errorData = jsonDecode(response.body);
         setState(() {
-          _errorMessage = errorData['message'] ?? 'Invalid username or password.';
+          _errorMessage =
+              errorData['message'] ?? 'Invalid username or password.';
         });
       }
     } catch (e) {
@@ -125,7 +135,8 @@ class _LoginPageState extends State<LoginPage> {
         if (e.toString().contains('type') && e.toString().contains('subtype')) {
           _errorMessage = 'Server response format error. Please try again.';
         } else {
-          _errorMessage = 'Connection error. Please check your internet connection.';
+          _errorMessage =
+              'Connection error. Please check your internet connection.';
         }
       });
       debugPrint('Login error: $e');
@@ -155,11 +166,7 @@ class _LoginPageState extends State<LoginPage> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F2342),
-              Color(0xFF1C5D8C),
-              Color(0xFF13324D),
-            ],
+            colors: [Color(0xFF0F2342), Color(0xFF1C5D8C), Color(0xFF13324D)],
           ),
         ),
         child: Stack(
@@ -191,7 +198,10 @@ class _LoginPageState extends State<LoginPage> {
             SafeArea(
               child: Center(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 24,
+                  ),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 420),
                     child: Container(
@@ -218,10 +228,7 @@ class _LoginPageState extends State<LoginPage> {
                                 color: const Color(0xFFE9EEF6),
                                 borderRadius: BorderRadius.circular(16),
                               ),
-                              child: Image.asset(
-                                'assets/logo.png',
-                                height: 46,
-                              ),
+                              child: Image.asset('assets/logo.png', height: 46),
                             ),
                           ),
                           const SizedBox(height: 18),
@@ -246,14 +253,20 @@ class _LoginPageState extends State<LoginPage> {
                           TextField(
                             controller: _usernameController,
                             textInputAction: TextInputAction.next,
-                            decoration: inputDecoration('Username', Icons.person_outline),
+                            decoration: inputDecoration(
+                              'Username',
+                              Icons.person_outline,
+                            ),
                           ),
                           const SizedBox(height: 16),
                           TextField(
                             controller: _passwordController,
                             obscureText: true,
                             textInputAction: TextInputAction.done,
-                            decoration: inputDecoration('Password', Icons.lock_outline),
+                            decoration: inputDecoration(
+                              'Password',
+                              Icons.lock_outline,
+                            ),
                           ),
                           const SizedBox(height: 12),
                           Row(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/api_service.dart';
+import 'services/local_users_db_service.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -12,7 +13,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   bool _isLoading = false;
-  
+
   // API Data Storage
   List<Map<String, dynamic>> _countries = [];
   List<Map<String, dynamic>> _provinces = [];
@@ -25,9 +26,9 @@ class _SettingsPageState extends State<SettingsPage> {
   List<Map<String, dynamic>> _transferTypes = [];
   List<Map<String, dynamic>> _paymentMethods = [];
   List<Map<String, dynamic>> _banks = [];
-  
+
   DateTime? _lastSyncTime;
-  
+
   // Loading states for individual sections
   bool _loadingLocation = false;
   bool _loadingFinancial = false;
@@ -42,10 +43,10 @@ class _SettingsPageState extends State<SettingsPage> {
   /// بارگذاری داده‌های ذخیره شده از SharedPreferences
   Future<void> _loadCachedData() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       // Load cached API data
       final countriesJson = prefs.getString('settings_countries');
       final provincesJson = prefs.getString('settings_provinces');
@@ -59,19 +60,41 @@ class _SettingsPageState extends State<SettingsPage> {
       final paymentMethodsJson = prefs.getString('settings_payment_methods');
       final banksJson = prefs.getString('settings_banks');
       final lastSync = prefs.getString('settings_last_sync');
-      
+
       setState(() {
-        _countries = countriesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(countriesJson)) : [];
-        _provinces = provincesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(provincesJson)) : [];
-        _zones = zonesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(zonesJson)) : [];
-        _cities = citiesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(citiesJson)) : [];
-        _currencies = currenciesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(currenciesJson)) : [];
-        _branches = branchesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(branchesJson)) : [];
-        _identityTypes = identityTypesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(identityTypesJson)) : [];
-        _accountTypes = accountTypesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(accountTypesJson)) : [];
-        _transferTypes = transferTypesJson != null ? List<Map<String, dynamic>>.from(jsonDecode(transferTypesJson)) : [];
-        _paymentMethods = paymentMethodsJson != null ? List<Map<String, dynamic>>.from(jsonDecode(paymentMethodsJson)) : [];
-        _banks = banksJson != null ? List<Map<String, dynamic>>.from(jsonDecode(banksJson)) : [];
+        _countries = countriesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(countriesJson))
+            : [];
+        _provinces = provincesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(provincesJson))
+            : [];
+        _zones = zonesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(zonesJson))
+            : [];
+        _cities = citiesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(citiesJson))
+            : [];
+        _currencies = currenciesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(currenciesJson))
+            : [];
+        _branches = branchesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(branchesJson))
+            : [];
+        _identityTypes = identityTypesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(identityTypesJson))
+            : [];
+        _accountTypes = accountTypesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(accountTypesJson))
+            : [];
+        _transferTypes = transferTypesJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(transferTypesJson))
+            : [];
+        _paymentMethods = paymentMethodsJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(paymentMethodsJson))
+            : [];
+        _banks = banksJson != null
+            ? List<Map<String, dynamic>>.from(jsonDecode(banksJson))
+            : [];
         _lastSyncTime = lastSync != null ? DateTime.parse(lastSync) : null;
       });
     } catch (e) {
@@ -84,33 +107,36 @@ class _SettingsPageState extends State<SettingsPage> {
   /// بروزرسانی داده‌های مکانی (کشورها، استان‌ها، مناطق، شهرها)
   Future<void> _syncLocationData() async {
     setState(() => _loadingLocation = true);
-    
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       print('📡 Syncing location data from API...');
       final countriesData = await ApiService.getCountries();
       final provincesData = await ApiService.getProvinces();
       final zonesData = await ApiService.getZones();
-      
+
       if (countriesData.isNotEmpty) {
         await prefs.setString('settings_countries', jsonEncode(countriesData));
         print('✅ Countries saved: ${countriesData.length} items');
       }
-      
+
       if (provincesData.isNotEmpty) {
         await prefs.setString('settings_provinces', jsonEncode(provincesData));
         print('✅ Provinces saved: ${provincesData.length} items');
       }
-      
+
       if (zonesData.isNotEmpty) {
         await prefs.setString('settings_zones', jsonEncode(zonesData));
         print('✅ Zones saved: ${zonesData.length} items');
       }
-      
-      await prefs.setString('settings_last_sync', DateTime.now().toIso8601String());
+
+      await prefs.setString(
+        'settings_last_sync',
+        DateTime.now().toIso8601String(),
+      );
       await _loadCachedData();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -133,42 +159,69 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() => _loadingLocation = false);
     }
   }
-  
+
   /// بروزرسانی داده‌های مالی (ارزها، بانک‌ها، روش‌های پرداخت)
   Future<void> _syncFinancialData() async {
     setState(() => _loadingFinancial = true);
-    
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       print('📡 Syncing financial data from API...');
       final transferData = await ApiService.getTransferCashSelectOptions();
-      
+
       if (transferData != null) {
-        if (transferData.containsKey('currencies') && transferData['currencies'] != null) {
-          await prefs.setString('settings_currencies', jsonEncode(transferData['currencies']));
-          print('✅ currencies saved: ${(transferData['currencies'] as List).length} items');
-        }
-        
-        if (transferData.containsKey('banks') && transferData['banks'] != null) {
-          await prefs.setString('settings_banks', jsonEncode(transferData['banks']));
-          print('✅ Banks saved: ${(transferData['banks'] as List).length} items');
+        if (transferData.containsKey('currencies') &&
+            transferData['currencies'] != null) {
+          await prefs.setString(
+            'settings_currencies',
+            jsonEncode(transferData['currencies']),
+          );
+          print(
+            '✅ currencies saved: ${(transferData['currencies'] as List).length} items',
+          );
         }
 
-        if (transferData.containsKey('transfer_types') && transferData['transfer_types'] != null) {
-          await prefs.setString('settings_transfer_types', jsonEncode(transferData['transfer_types']));
-          print('✅ Transfer Types saved: ${(transferData['transfer_types'] as List).length} items');
+        if (transferData.containsKey('banks') &&
+            transferData['banks'] != null) {
+          await prefs.setString(
+            'settings_banks',
+            jsonEncode(transferData['banks']),
+          );
+          print(
+            '✅ Banks saved: ${(transferData['banks'] as List).length} items',
+          );
         }
-        
-        if (transferData.containsKey('paymentMethods') && transferData['paymentMethods'] != null) {
-          await prefs.setString('settings_payment_methods', jsonEncode(transferData['paymentMethods']));
-          print('✅ Payment Methods saved: ${(transferData['paymentMethods'] as List).length} items');
+
+        if (transferData.containsKey('transfer_types') &&
+            transferData['transfer_types'] != null) {
+          await prefs.setString(
+            'settings_transfer_types',
+            jsonEncode(transferData['transfer_types']),
+          );
+          print(
+            '✅ Transfer Types saved: ${(transferData['transfer_types'] as List).length} items',
+          );
+        }
+
+        if (transferData.containsKey('paymentMethods') &&
+            transferData['paymentMethods'] != null) {
+          await prefs.setString(
+            'settings_payment_methods',
+            jsonEncode(transferData['paymentMethods']),
+          );
+          print(
+            '✅ Payment Methods saved: ${(transferData['paymentMethods'] as List).length} items',
+          );
         }
       }
-      
-      await prefs.setString('settings_last_sync', DateTime.now().toIso8601String());
+
+      await prefs.setString(
+        'settings_last_sync',
+        DateTime.now().toIso8601String(),
+      );
       await _loadCachedData();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -191,39 +244,58 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() => _loadingFinancial = false);
     }
   }
-  
+
   /// بروزرسانی داده‌های سازمانی (شعبات، انواع شناسنامه، انواع حساب، انواع حواله)
   Future<void> _syncOrganizationalData() async {
     setState(() => _loadingOrganizational = true);
-    
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       print('📡 Syncing organizational data from API...');
       final accountData = await ApiService.getAccountSelectOptions();
-      
+
       if (accountData != null) {
-        if (accountData.containsKey('branches') && accountData['branches'] != null) {
-          await prefs.setString('settings_branches', jsonEncode(accountData['branches']));
-          print('✅ Branches saved: ${(accountData['branches'] as List).length} items');
+        if (accountData.containsKey('branches') &&
+            accountData['branches'] != null) {
+          await prefs.setString(
+            'settings_branches',
+            jsonEncode(accountData['branches']),
+          );
+          print(
+            '✅ Branches saved: ${(accountData['branches'] as List).length} items',
+          );
         }
-        
-        if (accountData.containsKey('identityTypes') && accountData['identityTypes'] != null) {
-          await prefs.setString('settings_identity_types', jsonEncode(accountData['identityTypes']));
-          print('✅ Identity Types saved: ${(accountData['identityTypes'] as List).length} items');
+
+        if (accountData.containsKey('identityTypes') &&
+            accountData['identityTypes'] != null) {
+          await prefs.setString(
+            'settings_identity_types',
+            jsonEncode(accountData['identityTypes']),
+          );
+          print(
+            '✅ Identity Types saved: ${(accountData['identityTypes'] as List).length} items',
+          );
         }
-        
-        if (accountData.containsKey('accountTypes') && accountData['accountTypes'] != null) {
-          await prefs.setString('settings_account_types', jsonEncode(accountData['accountTypes']));
-          print('✅ Account Types saved: ${(accountData['accountTypes'] as List).length} items');
+
+        if (accountData.containsKey('accountTypes') &&
+            accountData['accountTypes'] != null) {
+          await prefs.setString(
+            'settings_account_types',
+            jsonEncode(accountData['accountTypes']),
+          );
+          print(
+            '✅ Account Types saved: ${(accountData['accountTypes'] as List).length} items',
+          );
         }
-        
-        
       }
-      
-      await prefs.setString('settings_last_sync', DateTime.now().toIso8601String());
+
+      await prefs.setString(
+        'settings_last_sync',
+        DateTime.now().toIso8601String(),
+      );
       await _loadCachedData();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -246,22 +318,22 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() => _loadingOrganizational = false);
     }
   }
-  
+
   /// دریافت همه داده‌ها از API و ذخیره در SharedPreferences
   Future<void> _syncAllData() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       // فراخوانی API اطلاعات پایه حساب (Account)
       print('📡 Syncing account data from API...');
       final accountData = await ApiService.getAccountSelectOptions();
-      
+
       // فراخوانی API اطلاعات پایه حواله (Transfer Cash)
       print('📡 Syncing transfer cash data from API...');
       final transferData = await ApiService.getTransferCashSelectOptions();
-      
+
       // فراخوانی API‌های مکان‌ها
       print('📡 Syncing location data from API...');
       final countriesData = await ApiService.getCountries();
@@ -269,53 +341,57 @@ class _SettingsPageState extends State<SettingsPage> {
       final zonesData = await ApiService.getZones();
       // final citiesData = await ApiService.getCities(); // TEMPORARILY DISABLED
       final citiesData = <Map<String, dynamic>>[]; // Empty placeholder
-      
-      if (accountData == null && transferData == null && 
-          countriesData.isEmpty && provincesData.isEmpty && 
+
+      if (accountData == null &&
+          transferData == null &&
+          countriesData.isEmpty &&
+          provincesData.isEmpty &&
           zonesData.isEmpty) {
         throw Exception('Failed to fetch data from all APIs');
       }
-      
+
       // ترکیب داده‌ها از همه API‌ها
       final combinedData = <String, dynamic>{};
-      
+
       if (accountData != null) {
         print('✅ Account API Data received: ${accountData.keys.toList()}');
         combinedData.addAll(accountData);
       }
-      
+
       if (transferData != null) {
-        print('✅ Transfer Cash API Data received: ${transferData.keys.toList()}');
+        print(
+          '✅ Transfer Cash API Data received: ${transferData.keys.toList()}',
+        );
         combinedData.addAll(transferData);
       }
-      
+
       // اضافه کردن داده‌های مکان‌ها
       if (countriesData.isNotEmpty) {
         print('✅ Countries API: ${countriesData.length} items');
         combinedData['countries'] = countriesData;
       }
-      
+
       if (provincesData.isNotEmpty) {
         print('✅ Provinces API: ${provincesData.length} items');
         combinedData['provinces'] = provincesData;
       }
-      
+
       if (zonesData.isNotEmpty) {
         print('✅ Zones API: ${zonesData.length} items');
         combinedData['zones'] = zonesData;
       }
-      
+
       if (citiesData.isNotEmpty) {
         print('✅ Cities API: ${citiesData.length} items');
         combinedData['cities'] = citiesData;
       }
-      
+
       print('📊 Combined data keys: ${combinedData.keys.toList()}');
-      
+
       // ذخیره داده‌های استاندارد
       final standardFields = {
         'countries': 'settings_countries',
-        'provinces': 'settings_provinces', 
+        'provinces': 'settings_provinces',
         'zones': 'settings_zones',
         'cities': 'settings_cities',
         'currencies': 'settings_currencies',
@@ -327,20 +403,22 @@ class _SettingsPageState extends State<SettingsPage> {
         'banks': 'settings_banks',
         'exchangeRates': 'settings_exchange_rates',
       };
-      
+
       int savedCount = 0;
       for (var entry in standardFields.entries) {
         final apiKey = entry.key;
         final storageKey = entry.value;
-        
+
         if (combinedData.containsKey(apiKey) && combinedData[apiKey] != null) {
           await prefs.setString(storageKey, jsonEncode(combinedData[apiKey]));
-          final count = (combinedData[apiKey] is List) ? (combinedData[apiKey] as List).length : 1;
+          final count = (combinedData[apiKey] is List)
+              ? (combinedData[apiKey] as List).length
+              : 1;
           print('✅ $apiKey saved: $count items');
           savedCount++;
         }
       }
-      
+
       // ذخیره سایر فیلدهای احتمالی که در لیست استاندارد نیستند
       for (var key in combinedData.keys) {
         if (!standardFields.containsKey(key)) {
@@ -349,12 +427,16 @@ class _SettingsPageState extends State<SettingsPage> {
           savedCount++;
         }
       }
-      
-      await prefs.setString('settings_last_sync', DateTime.now().toIso8601String());
-      
+
+      await prefs.setString(
+        'settings_last_sync',
+        DateTime.now().toIso8601String(),
+      );
+      await LocalUsersDbService.syncUsersFromApi();
+
       // بارگذاری مجدد
       await _loadCachedData();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -398,7 +480,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
-    
+
     if (confirmed == true) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('settings_countries');
@@ -410,17 +492,16 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.remove('settings_branches');
       await prefs.remove('settings_transfer_types');
       await prefs.remove('settings_banks');
-      
+
       await prefs.remove('settings_account_types');
       await prefs.remove('settings_identity_types');
-      
-      
+
       await prefs.remove('settings_exchange_rates');
       await prefs.remove('settings_payment_methods');
       await prefs.remove('settings_last_sync');
-      
+
       await _loadCachedData();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -434,16 +515,27 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final totalRecords = _countries.length + _provinces.length + _zones.length + 
-                         _cities.length + _currencies.length + _branches.length +
-                         _identityTypes.length + _accountTypes.length + _transferTypes.length +
-                         _paymentMethods.length + _banks.length;
-    
+    final totalRecords =
+        _countries.length +
+        _provinces.length +
+        _zones.length +
+        _cities.length +
+        _currencies.length +
+        _branches.length +
+        _identityTypes.length +
+        _accountTypes.length +
+        _transferTypes.length +
+        _paymentMethods.length +
+        _banks.length;
+
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
         elevation: 0,
-        title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Settings',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         centerTitle: true,
         flexibleSpace: Container(
           decoration: BoxDecoration(
@@ -469,7 +561,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   CircularProgressIndicator(
                     strokeWidth: 3,
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.blue[700]!),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      Colors.blue[700]!,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   Text(
@@ -517,7 +611,11 @@ class _SettingsPageState extends State<SettingsPage> {
                                 color: Colors.white.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              child: const Icon(Icons.storage, color: Colors.white, size: 28),
+                              child: const Icon(
+                                Icons.storage,
+                                color: Colors.white,
+                                size: 28,
+                              ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
@@ -552,7 +650,11 @@ class _SettingsPageState extends State<SettingsPage> {
                           const SizedBox(height: 12),
                           Row(
                             children: [
-                              Icon(Icons.schedule, color: Colors.white.withOpacity(0.8), size: 16),
+                              Icon(
+                                Icons.schedule,
+                                color: Colors.white.withOpacity(0.8),
+                                size: 16,
+                              ),
                               const SizedBox(width: 8),
                               Text(
                                 'Last Update: ${_formatDateTime(_lastSyncTime!)}',
@@ -567,9 +669,9 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     ),
                   ),
-                  
+
                   const SizedBox(height: 20),
-                  
+
                   // دکمه‌های اکشن
                   Row(
                     children: [
@@ -608,12 +710,15 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 24),
-                  
+
                   // هدر بخش داده‌ها
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 8,
+                    ),
                     child: Row(
                       children: [
                         Container(
@@ -636,57 +741,107 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     ),
                   ),
-                  
+
                   const SizedBox(height: 12),
-                  
+
                   // Location Group
                   _buildCategorySection(
                     'Geographic Information',
                     Icons.location_on,
                     Colors.green,
                     [
-                      _buildDataCard('Countries', _countries, Icons.public, Colors.green),
-                      _buildDataCard('Provinces', _provinces, Icons.location_city, Colors.green),
+                      _buildDataCard(
+                        'Countries',
+                        _countries,
+                        Icons.public,
+                        Colors.green,
+                      ),
+                      _buildDataCard(
+                        'Provinces',
+                        _provinces,
+                        Icons.location_city,
+                        Colors.green,
+                      ),
                       _buildDataCard('Zones', _zones, Icons.map, Colors.green),
-                      _buildDataCard('Cities', _cities, Icons.location_city_outlined, Colors.green),
+                      _buildDataCard(
+                        'Cities',
+                        _cities,
+                        Icons.location_city_outlined,
+                        Colors.green,
+                      ),
                     ],
                     onRefresh: _syncLocationData,
                     isLoading: _loadingLocation,
                   ),
-                  
+
                   const SizedBox(height: 16),
-                  
+
                   // Financial Group
                   _buildCategorySection(
                     'Financial Information',
                     Icons.account_balance,
                     Colors.orange,
                     [
-                      _buildDataCard('Currencies', _currencies, Icons.attach_money, Colors.orange),
-                      _buildDataCard('Banks', _banks, Icons.account_balance_wallet, Colors.orange),
-                      _buildDataCard('Payment Methods', _paymentMethods, Icons.payment, Colors.orange),
+                      _buildDataCard(
+                        'Currencies',
+                        _currencies,
+                        Icons.attach_money,
+                        Colors.orange,
+                      ),
+                      _buildDataCard(
+                        'Banks',
+                        _banks,
+                        Icons.account_balance_wallet,
+                        Colors.orange,
+                      ),
+                      _buildDataCard(
+                        'Payment Methods',
+                        _paymentMethods,
+                        Icons.payment,
+                        Colors.orange,
+                      ),
                     ],
                     onRefresh: _syncFinancialData,
                     isLoading: _loadingFinancial,
                   ),
-                  
+
                   const SizedBox(height: 16),
-                  
+
                   // Organizational Settings Group
                   _buildCategorySection(
                     'Organizational Settings',
                     Icons.business,
                     Colors.purple,
                     [
-                      _buildDataCard('Branches', _branches, Icons.business, Colors.purple),
-                      _buildDataCard('Identity Types', _identityTypes, Icons.badge, Colors.purple),
-                      _buildDataCard('Account Types', _accountTypes, Icons.account_balance, Colors.purple),
-                      _buildDataCard('Transfer Types', _transferTypes, Icons.swap_horiz, Colors.purple),
+                      _buildDataCard(
+                        'Branches',
+                        _branches,
+                        Icons.business,
+                        Colors.purple,
+                      ),
+                      _buildDataCard(
+                        'Identity Types',
+                        _identityTypes,
+                        Icons.badge,
+                        Colors.purple,
+                      ),
+                      _buildDataCard(
+                        'Account Types',
+                        _accountTypes,
+                        Icons.account_balance,
+                        Colors.purple,
+                      ),
+                      _buildDataCard(
+                        'Transfer Types',
+                        _transferTypes,
+                        Icons.swap_horiz,
+                        Colors.purple,
+                      ),
                     ],
                     onRefresh: _syncOrganizationalData,
                     isLoading: _loadingOrganizational,
                   ),
-                  
+
                   const SizedBox(height: 20),
                 ],
               ),
@@ -694,7 +849,14 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildCategorySection(String title, IconData icon, MaterialColor color, List<Widget> cards, {VoidCallback? onRefresh, bool isLoading = false}) {
+  Widget _buildCategorySection(
+    String title,
+    IconData icon,
+    MaterialColor color,
+    List<Widget> cards, {
+    VoidCallback? onRefresh,
+    bool isLoading = false,
+  }) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -735,13 +897,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 if (onRefresh != null)
                   IconButton(
-                    icon: isLoading 
+                    icon: isLoading
                         ? SizedBox(
                             width: 20,
                             height: 20,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(color[600]!),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                color[600]!,
+                              ),
                             ),
                           )
                         : Icon(Icons.refresh, color: color[600], size: 22),
@@ -758,27 +922,35 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildDataCard(String title, List<Map<String, dynamic>> data, IconData icon, MaterialColor color) {
+  Widget _buildDataCard(
+    String title,
+    List<Map<String, dynamic>> data,
+    IconData icon,
+    MaterialColor color,
+  ) {
     final isEmpty = data.isEmpty;
-    
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: isEmpty ? null : () {
-          // Special handling for Provinces and Zones - show filterable by country
-          if (title == 'Zones') {
-            _showZonesWithCountryFilter();
-          } else if (title == 'Provinces') {
-            _showProvincesWithCountryFilter();
-          } else {
-            showModalBottomSheet(
-              context: context,
-              isScrollControlled: true,
-              backgroundColor: Colors.transparent,
-              builder: (context) => _buildDataDetailsSheet(title, data, icon, color),
-            );
-          }
-        },
+        onTap: isEmpty
+            ? null
+            : () {
+                // Special handling for Provinces and Zones - show filterable by country
+                if (title == 'Zones') {
+                  _showZonesWithCountryFilter();
+                } else if (title == 'Provinces') {
+                  _showProvincesWithCountryFilter();
+                } else {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (context) =>
+                        _buildDataDetailsSheet(title, data, icon, color),
+                  );
+                }
+              },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: const BoxDecoration(
@@ -812,7 +984,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: isEmpty ? Colors.grey[200] : color.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(20),
@@ -839,7 +1014,12 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildDataDetailsSheet(String title, List<Map<String, dynamic>> data, IconData icon, MaterialColor color) {
+  Widget _buildDataDetailsSheet(
+    String title,
+    List<Map<String, dynamic>> data,
+    IconData icon,
+    MaterialColor color,
+  ) {
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
       minChildSize: 0.5,
@@ -871,7 +1051,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
                 ),
                 child: Row(
                   children: [
@@ -935,17 +1117,22 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                       title: Text(
-                        item['title']?.toString() ?? item['name']?.toString() ?? 'N/A',
+                        item['title']?.toString() ??
+                            item['name']?.toString() ??
+                            'N/A',
                         style: const TextStyle(
                           fontWeight: FontWeight.w500,
                           fontSize: 15,
                         ),
                       ),
-                      subtitle: item['code'] != null 
+                      subtitle: item['code'] != null
                           ? Text('Code: ${item['code']}')
                           : null,
                       trailing: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.grey[200],
                           borderRadius: BorderRadius.circular(6),
@@ -973,7 +1160,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String _formatDateTime(DateTime dateTime) {
     final now = DateTime.now();
     final difference = now.difference(dateTime);
-    
+
     if (difference.inMinutes < 1) {
       return 'Just now';
     } else if (difference.inHours < 1) {
@@ -1026,7 +1213,9 @@ class _SettingsPageState extends State<SettingsPage> {
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(20),
+                        ),
                       ),
                       child: Row(
                         children: [
@@ -1036,7 +1225,11 @@ class _SettingsPageState extends State<SettingsPage> {
                               color: Colors.white.withOpacity(0.2),
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: const Icon(Icons.map, color: Colors.white, size: 28),
+                            child: const Icon(
+                              Icons.map,
+                              color: Colors.white,
+                              size: 28,
+                            ),
                           ),
                           const SizedBox(width: 16),
                           Expanded(
@@ -1075,7 +1268,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       decoration: BoxDecoration(
                         color: Colors.green[50],
                         border: Border(
-                          bottom: BorderSide(color: Colors.green[200]!, width: 1),
+                          bottom: BorderSide(
+                            color: Colors.green[200]!,
+                            width: 1,
+                          ),
                         ),
                       ),
                       child: DropdownButtonFormField<int>(
@@ -1098,7 +1294,9 @@ class _SettingsPageState extends State<SettingsPage> {
                           ..._countries.map((country) {
                             return DropdownMenuItem<int>(
                               value: country['id'] as int?,
-                              child: Text(country['title']?.toString() ?? 'N/A'),
+                              child: Text(
+                                country['title']?.toString() ?? 'N/A',
+                              ),
                             );
                           }),
                         ],
@@ -1123,7 +1321,11 @@ class _SettingsPageState extends State<SettingsPage> {
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.inbox_outlined, size: 64, color: Colors.grey[400]),
+                                  Icon(
+                                    Icons.inbox_outlined,
+                                    size: 64,
+                                    color: Colors.grey[400],
+                                  ),
                                   const SizedBox(height: 16),
                                   Text(
                                     'No zones found',
@@ -1150,7 +1352,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
                                 return ListTile(
                                   leading: CircleAvatar(
-                                    backgroundColor: Colors.green.withOpacity(0.1),
+                                    backgroundColor: Colors.green.withOpacity(
+                                      0.1,
+                                    ),
                                     child: Text(
                                       '${index + 1}',
                                       style: TextStyle(
@@ -1161,14 +1365,17 @@ class _SettingsPageState extends State<SettingsPage> {
                                     ),
                                   ),
                                   title: Text(
-                                    zone['title']?.toString() ?? zone['name']?.toString() ?? 'N/A',
+                                    zone['title']?.toString() ??
+                                        zone['name']?.toString() ??
+                                        'N/A',
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w500,
                                       fontSize: 15,
                                     ),
                                   ),
                                   subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       if (countryName != null)
                                         Text(
@@ -1189,18 +1396,28 @@ class _SettingsPageState extends State<SettingsPage> {
                                     ],
                                   ),
                                   trailing: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: zone['isActive'] == true || zone['isActive'] == 1
+                                      color:
+                                          zone['isActive'] == true ||
+                                              zone['isActive'] == 1
                                           ? Colors.green[100]
                                           : Colors.grey[200],
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
-                                      zone['isActive'] == true || zone['isActive'] == 1 ? 'Active' : 'Inactive',
+                                      zone['isActive'] == true ||
+                                              zone['isActive'] == 1
+                                          ? 'Active'
+                                          : 'Inactive',
                                       style: TextStyle(
                                         fontSize: 11,
-                                        color: zone['isActive'] == true || zone['isActive'] == 1
+                                        color:
+                                            zone['isActive'] == true ||
+                                                zone['isActive'] == 1
                                             ? Colors.green[700]
                                             : Colors.grey[600],
                                         fontWeight: FontWeight.w500,
@@ -1262,7 +1479,9 @@ class _SettingsPageState extends State<SettingsPage> {
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(20),
+                        ),
                       ),
                       child: Row(
                         children: [
@@ -1272,7 +1491,11 @@ class _SettingsPageState extends State<SettingsPage> {
                               color: Colors.white.withOpacity(0.2),
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: const Icon(Icons.location_city, color: Colors.white, size: 28),
+                            child: const Icon(
+                              Icons.location_city,
+                              color: Colors.white,
+                              size: 28,
+                            ),
                           ),
                           const SizedBox(width: 16),
                           Expanded(
@@ -1311,7 +1534,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       decoration: BoxDecoration(
                         color: Colors.green[50],
                         border: Border(
-                          bottom: BorderSide(color: Colors.green[200]!, width: 1),
+                          bottom: BorderSide(
+                            color: Colors.green[200]!,
+                            width: 1,
+                          ),
                         ),
                       ),
                       child: DropdownButtonFormField<int>(
@@ -1334,7 +1560,9 @@ class _SettingsPageState extends State<SettingsPage> {
                           ..._countries.map((country) {
                             return DropdownMenuItem<int>(
                               value: country['id'] as int?,
-                              child: Text(country['title']?.toString() ?? 'N/A'),
+                              child: Text(
+                                country['title']?.toString() ?? 'N/A',
+                              ),
                             );
                           }),
                         ],
@@ -1345,7 +1573,9 @@ class _SettingsPageState extends State<SettingsPage> {
                               filteredProvinces = _provinces;
                             } else {
                               filteredProvinces = _provinces
-                                  .where((province) => province['parentId'] == value)
+                                  .where(
+                                    (province) => province['parentId'] == value,
+                                  )
                                   .toList();
                             }
                           });
@@ -1359,7 +1589,11 @@ class _SettingsPageState extends State<SettingsPage> {
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.inbox_outlined, size: 64, color: Colors.grey[400]),
+                                  Icon(
+                                    Icons.inbox_outlined,
+                                    size: 64,
+                                    color: Colors.grey[400],
+                                  ),
                                   const SizedBox(height: 16),
                                   Text(
                                     'No provinces found',
@@ -1386,7 +1620,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
                                 return ListTile(
                                   leading: CircleAvatar(
-                                    backgroundColor: Colors.green.withOpacity(0.1),
+                                    backgroundColor: Colors.green.withOpacity(
+                                      0.1,
+                                    ),
                                     child: Text(
                                       '${index + 1}',
                                       style: TextStyle(
@@ -1397,14 +1633,17 @@ class _SettingsPageState extends State<SettingsPage> {
                                     ),
                                   ),
                                   title: Text(
-                                    province['title']?.toString() ?? province['name']?.toString() ?? 'N/A',
+                                    province['title']?.toString() ??
+                                        province['name']?.toString() ??
+                                        'N/A',
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w500,
                                       fontSize: 15,
                                     ),
                                   ),
                                   subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       if (countryName != null)
                                         Text(
@@ -1425,18 +1664,28 @@ class _SettingsPageState extends State<SettingsPage> {
                                     ],
                                   ),
                                   trailing: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: province['isActive'] == true || province['isActive'] == 1
+                                      color:
+                                          province['isActive'] == true ||
+                                              province['isActive'] == 1
                                           ? Colors.green[100]
                                           : Colors.grey[200],
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
-                                      province['isActive'] == true || province['isActive'] == 1 ? 'Active' : 'Inactive',
+                                      province['isActive'] == true ||
+                                              province['isActive'] == 1
+                                          ? 'Active'
+                                          : 'Inactive',
                                       style: TextStyle(
                                         fontSize: 11,
-                                        color: province['isActive'] == true || province['isActive'] == 1
+                                        color:
+                                            province['isActive'] == true ||
+                                                province['isActive'] == 1
                                             ? Colors.green[700]
                                             : Colors.grey[600],
                                         fontWeight: FontWeight.w500,
@@ -1456,7 +1705,6 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
-
 }
 
 /// کلاس Helper برای دسترسی آسان به داده‌های تنظیمات از سایر صفحات
@@ -1467,19 +1715,25 @@ class SettingsDataHelper {
     final data = prefs.getString('settings_countries');
     if (data != null) {
       var countries = List<Map<String, dynamic>>.from(jsonDecode(data));
-      countries = countries.where((c) => c['isActive'] == true || c['isActive'] == 1).toList();
+      countries = countries
+          .where((c) => c['isActive'] == true || c['isActive'] == 1)
+          .toList();
       return countries;
     }
     return [];
   }
-  
+
   /// دریافت لیست استان‌ها
-  static Future<List<Map<String, dynamic>>> getProvinces({int? countryId}) async {
+  static Future<List<Map<String, dynamic>>> getProvinces({
+    int? countryId,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final data = prefs.getString('settings_provinces');
     if (data != null) {
       var provinces = List<Map<String, dynamic>>.from(jsonDecode(data));
-      provinces = provinces.where((p) => p['isActive'] == true || p['isActive'] == 1).toList();
+      provinces = provinces
+          .where((p) => p['isActive'] == true || p['isActive'] == 1)
+          .toList();
       if (countryId != null) {
         provinces = provinces.where((p) => p['parentId'] == countryId).toList();
       }
@@ -1487,14 +1741,16 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// درىافت لىست مناطق
   static Future<List<Map<String, dynamic>>> getZones({int? provinceId}) async {
     final prefs = await SharedPreferences.getInstance();
     final data = prefs.getString('settings_zones');
     if (data != null) {
       var zones = List<Map<String, dynamic>>.from(jsonDecode(data));
-      zones = zones.where((z) => z['isActive'] == true || z['isActive'] == 1).toList();
+      zones = zones
+          .where((z) => z['isActive'] == true || z['isActive'] == 1)
+          .toList();
       if (provinceId != null) {
         zones = zones.where((z) => z['parentId'] == provinceId).toList();
       }
@@ -1502,14 +1758,19 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// درىافت لىست شهرها
-  static Future<List<Map<String, dynamic>>> getCitiesData({int? provinceId, int? zoneId}) async {
+  static Future<List<Map<String, dynamic>>> getCitiesData({
+    int? provinceId,
+    int? zoneId,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final data = prefs.getString('settings_cities');
     if (data != null) {
       var cities = List<Map<String, dynamic>>.from(jsonDecode(data));
-      cities = cities.where((c) => c['isActive'] == true || c['isActive'] == 1).toList();
+      cities = cities
+          .where((c) => c['isActive'] == true || c['isActive'] == 1)
+          .toList();
       if (provinceId != null) {
         cities = cities.where((c) => c['parentId'] == provinceId).toList();
       }
@@ -1520,7 +1781,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت لیست ارزها
   static Future<List<Map<String, dynamic>>> getCurrencies() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1530,7 +1791,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت لیست شعبات
   static Future<List<Map<String, dynamic>>> getBranches() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1540,7 +1801,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت لیست انواع شناسنامه
   static Future<List<Map<String, dynamic>>> getIdentityTypes() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1550,7 +1811,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت لیست انواع حساب
   static Future<List<Map<String, dynamic>>> getAccountTypes() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1560,7 +1821,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت لیست انواع حواله
   static Future<List<Map<String, dynamic>>> getTransferTypes() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1570,7 +1831,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت لیست روش‌های پرداخت
   static Future<List<Map<String, dynamic>>> getPaymentMethods() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1580,7 +1841,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت لیست بانک‌ها
   static Future<List<Map<String, dynamic>>> getBanks() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1590,7 +1851,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت لیست نرخ‌های تبدیل ارز
   static Future<List<Map<String, dynamic>>> getExchangeRates() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1600,7 +1861,7 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// دریافت هر داده دلخواه با کلید
   static Future<List<Map<String, dynamic>>> getCustomData(String key) async {
     final prefs = await SharedPreferences.getInstance();
@@ -1610,13 +1871,13 @@ class SettingsDataHelper {
     }
     return [];
   }
-  
+
   /// بررسی آیا داده‌ها همگام‌سازی شده‌اند
   static Future<bool> isDataSynced() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('settings_last_sync') != null;
   }
-  
+
   /// دریافت زمان آخرین همگام‌سازی
   static Future<DateTime?> getLastSyncTime() async {
     final prefs = await SharedPreferences.getInstance();

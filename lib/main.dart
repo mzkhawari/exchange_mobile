@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'flutter_login_page.dart'; // 👈 فایل صفحه لاگین خودت که من قبلاً برات نوشتم
 import 'home_page.dart';
 import 'services/api_service.dart';
+import 'services/local_users_db_service.dart';
 import 'dart:io';
 
 class MyHttpOverrides extends HttpOverrides {
@@ -21,17 +22,18 @@ class MyHttpOverrides extends HttpOverrides {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = MyHttpOverrides();
-  
+
   // Log current API configuration
   ApiService.logCurrentConfig();
-      
+
   runApp(const MyApp());
 }
 
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
-  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -55,6 +57,14 @@ class _MyAppState extends State<MyApp> {
       await ApiService.validateRefreshTokenOnStartup();
       final isLoggedIn = await ApiService.isLoggedIn();
       final shouldRedirect = await ApiService.shouldRedirectToLogin();
+
+      if (isLoggedIn && !shouldRedirect) {
+        try {
+          await LocalUsersDbService.syncUsersFromApi();
+        } catch (e) {
+          debugPrint('Startup users sync failed: $e');
+        }
+      }
 
       return {
         'isLoggedIn': isLoggedIn,
@@ -188,7 +198,10 @@ class _MyAppState extends State<MyApp> {
                   backgroundColor: _brandMid,
                   foregroundColor: Colors.white,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 26,
+                    vertical: 12,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -198,12 +211,9 @@ class _MyAppState extends State<MyApp> {
             );
           }
 
-          final authData = snapshot.data ??
-              {
-                'isLoggedIn': false,
-                'shouldRedirect': false,
-                'error': null,
-              };
+          final authData =
+              snapshot.data ??
+              {'isLoggedIn': false, 'shouldRedirect': false, 'error': null};
           final error = authData['error'] as String?;
           if (error != null) {
             return _buildStatusScreen(
@@ -215,7 +225,10 @@ class _MyAppState extends State<MyApp> {
                   backgroundColor: _brandMid,
                   foregroundColor: Colors.white,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 26,
+                    vertical: 12,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),

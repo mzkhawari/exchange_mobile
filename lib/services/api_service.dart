@@ -16,40 +16,42 @@ class ApiService {
   // Production API server
   static const String _releaseBaseUrl = 'https://209.42.25.31:7179/api';
   static const String _releaseImageUrl = 'https://209.42.25.31:7179';
-  
+
   // Get current base URL based on build mode
   static String get baseUrl {
     return kDebugMode ? _debugBaseUrl : _releaseBaseUrl;
   }
-  
-  // Get current image URL based on build mode  
+
+  // Get current image URL based on build mode
   static String get baseImageUrl {
     return kDebugMode ? _debugImageUrl : _releaseImageUrl;
   }
-  
+
   // Helper method to get image URL
   static String getImageUrl() {
     return baseImageUrl;
   }
-  
+
   // Get current environment info
   static String get currentEnvironment {
     return kDebugMode ? 'DEBUG' : 'RELEASE';
   }
-  
+
   // Initialize and log current configuration
   static void logCurrentConfig() {
-    print('🌍 API Environment: $currentEnvironment');
-    print('🔗 Base URL: $baseUrl');
-    print('🖼️ Image URL: $baseImageUrl');
+    if (kDebugMode) {
+      print('🌍 API Environment: $currentEnvironment');
+      print('🔗 Base URL: $baseUrl');
+      print('🖼️ Image URL: $baseImageUrl');
+    }
   }
-  
+
   // Get stored auth token
   static Future<String?> getAuthToken() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('auth_token');
   }
-  
+
   // Store auth token
   static Future<void> setAuthToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
@@ -67,7 +69,7 @@ class ApiService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('refresh_token', token);
   }
-  
+
   // Remove auth token
   static Future<void> removeAuthToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -80,19 +82,19 @@ class ApiService {
   // Handle 401 Unauthorized error - clear all data and redirect to login
   static Future<void> handle401Unauthorized() async {
     print('🚨 401 Unauthorized: Token expired or invalid');
-    
+
     // Clear all stored authentication data
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
     await prefs.remove('refresh_token');
     await prefs.remove('user_data');
     await prefs.remove('login_response');
-    
+
     print('✅ All authentication data cleared');
-    
+
     // Set flag to redirect to login
     await prefs.setBool('should_redirect_to_login', true);
-    
+
     print('🔄 Login redirect flag set');
 
     if (onUnauthorized != null) {
@@ -105,11 +107,13 @@ class ApiService {
     final prefs = await SharedPreferences.getInstance();
     final shouldRedirect = prefs.getBool('should_redirect_to_login') ?? false;
     if (shouldRedirect) {
-      await prefs.remove('should_redirect_to_login'); // Clear flag after checking
+      await prefs.remove(
+        'should_redirect_to_login',
+      ); // Clear flag after checking
     }
     return shouldRedirect;
   }
-  
+
   // Get stored user data
   static Future<Map<String, dynamic>?> getStoredUserData() async {
     final prefs = await SharedPreferences.getInstance();
@@ -134,8 +138,10 @@ class ApiService {
     if (loginResponseString != null) {
       final loginData = json.decode(loginResponseString);
       if (loginData is Map) {
-        if (loginData['userName'] != null) return loginData['userName'].toString();
-        if (loginData['username'] != null) return loginData['username'].toString();
+        if (loginData['userName'] != null)
+          return loginData['userName'].toString();
+        if (loginData['username'] != null)
+          return loginData['username'].toString();
         if (loginData['currentUser'] is Map) {
           final currentUser = loginData['currentUser'] as Map;
           return currentUser['userName']?.toString() ??
@@ -147,7 +153,7 @@ class ApiService {
 
     return null;
   }
-  
+
   // Check if user is logged in
   static Future<bool> isLoggedIn() async {
     final token = await getAuthToken();
@@ -157,23 +163,26 @@ class ApiService {
 
   // Helper method to get full avatar URL
   static String? getFullAvatarUrl(String? picUrlAvatar) {
-    if (picUrlAvatar == null || picUrlAvatar.isEmpty || picUrlAvatar == 'null') {
+    if (picUrlAvatar == null ||
+        picUrlAvatar.isEmpty ||
+        picUrlAvatar == 'null') {
       return null;
     }
-    
+
     // If it's already a full URL, return as is
-    if (picUrlAvatar.startsWith('http://') || picUrlAvatar.startsWith('https://')) {
+    if (picUrlAvatar.startsWith('http://') ||
+        picUrlAvatar.startsWith('https://')) {
       return picUrlAvatar;
     }
-    
+
     // Clean up the path - replace backslashes with forward slashes
     String cleanPath = picUrlAvatar.replaceAll('\\', '/');
-    
+
     // Ensure path starts with /
     if (!cleanPath.startsWith('/')) {
       cleanPath = '/$cleanPath';
     }
-    
+
     // Split path and encode only the filename to handle spaces
     final parts = cleanPath.split('/');
     if (parts.length > 1) {
@@ -182,13 +191,16 @@ class ApiService {
       parts[parts.length - 1] = encodedFileName;
       cleanPath = parts.join('/');
     }
-    
+
     // Construct the full URL using the correct image URL
-    final fullUrl = '${currentEnvironment == 'DEBUG' ? _debugImageUrl : _releaseImageUrl}$cleanPath';
-    print('Avatar URL constructed: $fullUrl'); // Debug log
+    final fullUrl =
+        '${currentEnvironment == 'DEBUG' ? _debugImageUrl : _releaseImageUrl}$cleanPath';
+    if (kDebugMode) {
+      print('Avatar URL constructed: $fullUrl');
+    }
     return fullUrl;
   }
-  
+
   // Get user info from API
   static Future<Map<String, dynamic>?> getUserInfo() async {
     try {
@@ -196,7 +208,7 @@ class ApiService {
       if (token == null || token.isEmpty) {
         return null;
       }
-      
+
       final response = await http.get(
         Uri.parse('$baseUrl/user/getUserInfo'),
         headers: {
@@ -204,34 +216,44 @@ class ApiService {
           'Content-Type': 'application/json',
         },
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        print('═══════════════════════════════════════════════════════════');
-        print('🔍 getUserInfo API Response Details:');
-        print('📍 Endpoint: $baseUrl/user/getUserInfo');
-        print('📊 Status Code: ${response.statusCode}');
-        print('📋 Response Type: ${data.runtimeType}');
-        print('📄 Raw Response Body: ${response.body}');
-        print('🔧 Parsed Data: $data');
-        
-        if (data is List) {
-          print('📝 Response is List with ${data.length} items');
-          if (data.isNotEmpty) {
-            print('👤 First User Data: ${data[0]}');
+        if (kDebugMode) {
+          print('═══════════════════════════════════════════════════════════');
+          print('🔍 getUserInfo API Response Details:');
+          print('📍 Endpoint: $baseUrl/user/getUserInfo');
+          print('📊 Status Code: ${response.statusCode}');
+          print('📋 Response Type: ${data.runtimeType}');
+          print('📄 Raw Response Body: ${response.body}');
+          print('🔧 Parsed Data: $data');
+
+          if (data is List) {
+            print('📝 Response is List with ${data.length} items');
+            if (data.isNotEmpty) {
+              print('👤 First User Data: ${data[0]}');
+            }
+          } else if (data is Map) {
+            print('📝 Response is Map object');
+            print('🔑 Keys Available: ${data.keys.toList()}');
+            if (data.containsKey('id')) print('👤 User ID: ${data['id']}');
+            if (data.containsKey('firstName')) {
+              print('👤 First Name: ${data['firstName']}');
+            }
+            if (data.containsKey('lastName')) {
+              print('👤 Last Name: ${data['lastName']}');
+            }
+            if (data.containsKey('email')) print('📧 Email: ${data['email']}');
+            if (data.containsKey('userName')) {
+              print('🏷️ Username: ${data['userName']}');
+            }
+            if (data.containsKey('picUrlAvatar')) {
+              print('🖼️ Avatar URL: ${data['picUrlAvatar']}');
+            }
           }
-        } else if (data is Map) {
-          print('📝 Response is Map object');
-          print('🔑 Keys Available: ${data.keys.toList()}');
-          if (data.containsKey('id')) print('👤 User ID: ${data['id']}');
-          if (data.containsKey('firstName')) print('👤 First Name: ${data['firstName']}');
-          if (data.containsKey('lastName')) print('👤 Last Name: ${data['lastName']}');
-          if (data.containsKey('email')) print('📧 Email: ${data['email']}');
-          if (data.containsKey('userName')) print('🏷️ Username: ${data['userName']}');
-          if (data.containsKey('picUrlAvatar')) print('🖼️ Avatar URL: ${data['picUrlAvatar']}');
+          print('═══════════════════════════════════════════════════════════');
         }
-        print('═══════════════════════════════════════════════════════════');
-        
+
         // Handle different response structures
         if (data is List && data.isNotEmpty) {
           // If it returns a list, take the first user (current user)
@@ -240,7 +262,7 @@ class ApiService {
           // If it's a single user object
           return Map<String, dynamic>.from(data);
         }
-        
+
         return null;
       } else if (response.statusCode == 401) {
         // Handle 401 Unauthorized - clear data and flag for redirect
@@ -254,27 +276,29 @@ class ApiService {
       return null;
     }
   }
-  
+
   // Login method
-  static Future<Map<String, dynamic>?> login(String username, String password, {bool isRemember = false}) async {
+  static Future<Map<String, dynamic>?> login(
+    String username,
+    String password, {
+    bool isRemember = false,
+  }) async {
     try {
       print('🔐 LOGIN DEBUG: Environment = $currentEnvironment');
       print('🔐 LOGIN DEBUG: baseUrl = $baseUrl');
       print('🔐 LOGIN DEBUG: Full login URL = $baseUrl/auth/login');
       print('🔐 LOGIN DEBUG: kDebugMode = $kDebugMode');
-      
+
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'UserName': username,
           'Password': password,
           'isRemember': isRemember,
         }),
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['token'] != null) {
@@ -284,7 +308,8 @@ class ApiService {
           }
 
           final extractedRefreshToken = _extractRefreshToken(data['token']);
-          if (extractedRefreshToken != null && extractedRefreshToken.isNotEmpty) {
+          if (extractedRefreshToken != null &&
+              extractedRefreshToken.isNotEmpty) {
             await setRefreshToken(extractedRefreshToken);
           }
 
@@ -322,9 +347,7 @@ class ApiService {
       final response = await http
           .post(
             Uri.parse('$baseUrl/auth/refreshToken'),
-            headers: {
-              'Content-Type': 'application/json',
-            },
+            headers: {'Content-Type': 'application/json'},
             body: json.encode({
               'refreshToken': refreshToken,
               'accessToken': accessToken,
@@ -365,7 +388,9 @@ class ApiService {
         await handle401Unauthorized();
         return false;
       } else {
-        print('Refresh token validation failed: ${response.statusCode} - ${response.body}');
+        print(
+          'Refresh token validation failed: ${response.statusCode} - ${response.body}',
+        );
         return false;
       }
     } catch (e) {
@@ -382,8 +407,10 @@ class ApiService {
     if (tokenData == null) return null;
     if (tokenData is String) return tokenData;
     if (tokenData is Map) {
-      if (tokenData['accessToken'] != null) return tokenData['accessToken'].toString();
-      if (tokenData['access_token'] != null) return tokenData['access_token'].toString();
+      if (tokenData['accessToken'] != null)
+        return tokenData['accessToken'].toString();
+      if (tokenData['access_token'] != null)
+        return tokenData['access_token'].toString();
       if (tokenData['token'] != null) return tokenData['token'].toString();
     }
     return tokenData.toString();
@@ -392,18 +419,20 @@ class ApiService {
   static String? _extractRefreshToken(dynamic tokenData) {
     if (tokenData == null) return null;
     if (tokenData is Map) {
-      if (tokenData['refreshToken'] != null) return tokenData['refreshToken'].toString();
-      if (tokenData['refresh_token'] != null) return tokenData['refresh_token'].toString();
+      if (tokenData['refreshToken'] != null)
+        return tokenData['refreshToken'].toString();
+      if (tokenData['refresh_token'] != null)
+        return tokenData['refresh_token'].toString();
     }
     return null;
   }
-  
+
   // Get chat messages (mock implementation - replace with actual endpoint)
   static Future<List<Map<String, dynamic>>> getChatMessages() async {
     try {
       final token = await getAuthToken();
       if (token == null) return [];
-      
+
       // Replace with actual chat messages endpoint
       final response = await http.get(
         Uri.parse('$baseUrl/chat/messages'),
@@ -412,7 +441,7 @@ class ApiService {
           'Content-Type': 'application/json',
         },
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return List<Map<String, dynamic>>.from(data['messages'] ?? []);
@@ -422,13 +451,13 @@ class ApiService {
     }
     return [];
   }
-  
+
   // Send chat message (mock implementation)
   static Future<bool> sendChatMessage(String message) async {
     try {
       final token = await getAuthToken();
       if (token == null) return false;
-      
+
       final response = await http.post(
         Uri.parse('$baseUrl/chat/send'),
         headers: {
@@ -440,7 +469,7 @@ class ApiService {
           'timestamp': DateTime.now().toIso8601String(),
         }),
       );
-      
+
       return response.statusCode == 200;
     } catch (e) {
       print('Error sending message: $e');
@@ -456,7 +485,7 @@ class ApiService {
         print('No auth token available for getAllUsers');
         return [];
       }
-      
+
       final response = await http.get(
         Uri.parse('$baseUrl/User/getUserInfo'),
         headers: {
@@ -464,11 +493,11 @@ class ApiService {
           'Content-Type': 'application/json',
         },
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         print('Users API response: $data');
-        
+
         // Handle different response structures
         if (data is List) {
           return List<Map<String, dynamic>>.from(data);
@@ -480,7 +509,7 @@ class ApiService {
           // If it's a single user object, wrap it in a list
           return [Map<String, dynamic>.from(data)];
         }
-        
+
         return [];
       } else if (response.statusCode == 401) {
         // Handle 401 Unauthorized
@@ -488,7 +517,9 @@ class ApiService {
         print('Token expired while getting users');
         return [];
       } else {
-        print('Failed to load users: ${response.statusCode} - ${response.body}');
+        print(
+          'Failed to load users: ${response.statusCode} - ${response.body}',
+        );
         return [];
       }
     } catch (e) {
@@ -522,7 +553,7 @@ class ApiService {
 
       // Add form fields
       request.fields['chatMasterId'] = chatMasterId.toString();
-      
+
       // Always include value field - API requires it
       if (value != null && value.isNotEmpty) {
         request.fields['value'] = value;
@@ -545,7 +576,9 @@ class ApiService {
           request.fields['messageType'] = 'Voice';
           print('🎤 API DEBUG: Voice file added to request successfully');
         } else {
-          print('🎤 API DEBUG ERROR: Voice file does not exist at path: $voiceFilePath');
+          print(
+            '🎤 API DEBUG ERROR: Voice file does not exist at path: $voiceFilePath',
+          );
           return null;
         }
       }
@@ -558,17 +591,24 @@ class ApiService {
           final fileSize = await file.length();
           print('🖼️ API DEBUG: Attachment file exists, size: $fileSize bytes');
           request.files.add(
-            await http.MultipartFile.fromPath('attachmentFile', attachmentFilePath),
+            await http.MultipartFile.fromPath(
+              'attachmentFile',
+              attachmentFilePath,
+            ),
           );
           request.fields['messageType'] = attachmentType ?? 'Document';
           print('🖼️ API DEBUG: Attachment file added to request successfully');
         } else {
-          print('🖼️ API DEBUG ERROR: Attachment file does not exist at path: $attachmentFilePath');
+          print(
+            '🖼️ API DEBUG ERROR: Attachment file does not exist at path: $attachmentFilePath',
+          );
           return null;
         }
       }
 
-      print('Sending chat detail: chatMasterId=$chatMasterId, value=$value, voiceFile=$voiceFilePath, attachmentFile=$attachmentFilePath');
+      print(
+        'Sending chat detail: chatMasterId=$chatMasterId, value=$value, voiceFile=$voiceFilePath, attachmentFile=$attachmentFilePath',
+      );
 
       final response = await request.send();
       final responseBody = await response.stream.bytesToString();
@@ -576,7 +616,7 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(responseBody);
         print('postChatDetail response: $data (type: ${data.runtimeType})');
-        
+
         // API may return just 'true' or a Map with details
         if (data is bool && data == true) {
           // Success with no additional data - return empty map to indicate success
@@ -607,7 +647,10 @@ class ApiService {
   }
 
   // Get chat details by userId - returns both messages and ChatMasterId
-  static Future<Map<String, dynamic>?> getChatDetails(int userId) async {
+  static Future<Map<String, dynamic>?> getChatDetails(
+    int userId, {
+    int? msgId,
+  }) async {
     try {
       final token = await getAuthToken();
       if (token == null || token.isEmpty) {
@@ -615,8 +658,17 @@ class ApiService {
         return null;
       }
 
+      final params = <String, String>{'targetUserId': '$userId'};
+      if (msgId != null && msgId > 0) {
+        params['msgId'] = '$msgId';
+      }
+
+      final uri = Uri.parse(
+        '$baseUrl/ChatDetail/getChatDetails',
+      ).replace(queryParameters: params);
+
       final response = await http.get(
-        Uri.parse('$baseUrl/ChatDetail/getChatDetails?targetUserId=$userId'),
+        uri,
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -626,47 +678,50 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         print('getChatDetails API response: $data');
-        
+
         // Extract ChatMasterId from the response
         int? chatMasterId;
         List<Map<String, dynamic>> messages = [];
-        
+
         if (data is Map) {
           // Extract ChatMasterId from response
           chatMasterId = data['chatMasterId'] ?? data['ChatMasterId'];
-          
+
           // Extract messages from different possible response structures
           if (data['data'] != null && data['data'] is List) {
             messages = List<Map<String, dynamic>>.from(data['data']);
           } else if (data['messages'] != null && data['messages'] is List) {
             messages = List<Map<String, dynamic>>.from(data['messages']);
           }
-          
+
           // If ChatMasterId not found at root level, try to get it from first message
           if (chatMasterId == null && messages.isNotEmpty) {
-            chatMasterId = messages.first['chatMasterId'] ?? messages.first['ChatMasterId'];
+            chatMasterId =
+                messages.first['chatMasterId'] ??
+                messages.first['ChatMasterId'];
           }
         } else if (data is List) {
           messages = List<Map<String, dynamic>>.from(data);
           // Try to get ChatMasterId from first message
           if (messages.isNotEmpty) {
-            chatMasterId = messages.first['chatMasterId'] ?? messages.first['ChatMasterId'];
+            chatMasterId =
+                messages.first['chatMasterId'] ??
+                messages.first['ChatMasterId'];
           }
         }
-        
+
         print('🔍 Extracted ChatMasterId: $chatMasterId');
         print('🔍 Messages count: ${messages.length}');
-        
-        return {
-          'chatMasterId': chatMasterId,
-          'messages': messages,
-        };
+
+        return {'chatMasterId': chatMasterId, 'messages': messages};
       } else if (response.statusCode == 401) {
         await handle401Unauthorized();
         print('Token expired while getting chat details');
         return null;
       } else {
-        print('Failed to load chat details: ${response.statusCode} - ${response.body}');
+        print(
+          'Failed to load chat details: ${response.statusCode} - ${response.body}',
+        );
         return null;
       }
     } catch (e) {
@@ -687,10 +742,7 @@ class ApiService {
         return false;
       }
 
-      final requestBody = {
-        'chatDetailIds': chatDetailIds,
-        'status': status,
-      };
+      final requestBody = {'chatDetailIds': chatDetailIds, 'status': status};
 
       final response = await http.put(
         Uri.parse('$baseUrl/chat/updateChatDetailStatus'),
@@ -702,14 +754,18 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        print('updateChatDetailStatus success: status=$status, ids=$chatDetailIds');
+        print(
+          'updateChatDetailStatus success: status=$status, ids=$chatDetailIds',
+        );
         return true;
       } else if (response.statusCode == 401) {
         await handle401Unauthorized();
         print('Token expired while updating chat status');
         return false;
       } else {
-        print('Failed to update chat status: ${response.statusCode} - ${response.body}');
+        print(
+          'Failed to update chat status: ${response.statusCode} - ${response.body}',
+        );
         return false;
       }
     } catch (e) {
@@ -784,7 +840,9 @@ class ApiService {
         print('🚨 Token expired while getting transfer cash select options');
         return null;
       } else {
-        print('❌ Failed to get transfer cash select options: ${response.statusCode}');
+        print(
+          '❌ Failed to get transfer cash select options: ${response.statusCode}',
+        );
         print('Response body: ${response.body}');
         return null;
       }
@@ -815,7 +873,7 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         print('✅ Countries fetched successfully');
-        
+
         // Handle different response formats
         if (data is List) {
           print('📊 Countries count: ${data.length}');
@@ -866,7 +924,7 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         print('✅ Provinces fetched successfully');
-        
+
         if (data is List) {
           print('📊 Provinces count: ${data.length}');
           return List<Map<String, dynamic>>.from(data);
@@ -916,7 +974,7 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         print('✅ Zones fetched successfully');
-        
+
         if (data is List) {
           print('📊 Zones count: ${data.length}');
           return List<Map<String, dynamic>>.from(data);
@@ -966,7 +1024,7 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         print('✅ Cities fetched successfully');
-        
+
         if (data is List) {
           print('📊 Cities count: ${data.length}');
           return List<Map<String, dynamic>>.from(data);
@@ -1044,7 +1102,8 @@ class ApiService {
       print('📬 Response status: ${streamedResponse.statusCode}');
       print('📬 Response body: $responseBody');
 
-      if (streamedResponse.statusCode == 200 || streamedResponse.statusCode == 201) {
+      if (streamedResponse.statusCode == 200 ||
+          streamedResponse.statusCode == 201) {
         final data = json.decode(responseBody);
         print('✅ Transfer cash posted successfully');
         return data;
@@ -1064,7 +1123,11 @@ class ApiService {
   }
 
   /// Get list of customers/accounts
-  static Future<List<Map<String, dynamic>>> getAccounts({int page = 1, int size = 100, String search = ''}) async {
+  static Future<List<Map<String, dynamic>>> getAccounts({
+    int page = 1,
+    int size = 100,
+    String search = '',
+  }) async {
     try {
       final token = await getAuthToken();
       if (token == null || token.isEmpty) {
@@ -1091,7 +1154,7 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         print('✅ Accounts fetched successfully');
-        
+
         if (data is Map && data.containsKey('data')) {
           print('📊 Accounts count: ${(data['data'] as List).length}');
           return List<Map<String, dynamic>>.from(data['data']);
@@ -1113,5 +1176,4 @@ class ApiService {
       return [];
     }
   }
-
 }

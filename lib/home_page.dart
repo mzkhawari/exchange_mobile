@@ -21,6 +21,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   String _branchTitle = 'Katawaz Exchange';
   String _userName = '';
+  String? _avatarUrl;
 
   @override
   void initState() {
@@ -31,12 +32,22 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
     final userDataString = prefs.getString('user_data');
-    
+
     if (userDataString != null) {
       final userData = jsonDecode(userDataString);
+      final rawAvatarPath =
+          userData['picUrlAvatar'] ??
+          userData['PicUrlAvatar'] ??
+          userData['picUrlAvatarThumb'] ??
+          userData['PicUrlAvatarThumb'] ??
+          userData['avatarUrl'] ??
+          userData['avatar'] ??
+          userData['profileImage'];
+
       setState(() {
         _branchTitle = userData['branchTitle'] ?? 'Katawaz Exchange';
         _userName = userData['firstName'] ?? '';
+        _avatarUrl = ApiService.getFullAvatarUrl(rawAvatarPath?.toString());
       });
     }
   }
@@ -45,10 +56,9 @@ class _HomePageState extends State<HomePage> {
     // TODO: اینجا تابع نمایش لیست مشتریان
     //debugPrint('List Customers pressed');
     Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => const CustomerListPage()),
-      );
-    
+      context,
+      MaterialPageRoute(builder: (context) => const CustomerListPage()),
+    );
   }
 
   void _addCustomer(BuildContext context) {
@@ -61,11 +71,9 @@ class _HomePageState extends State<HomePage> {
 
   void _listTransactions(BuildContext context) {
     Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => TransactionListPage(),
-    ),
-  );
+      context,
+      MaterialPageRoute(builder: (context) => TransactionListPage()),
+    );
   }
 
   void _addTransaction(BuildContext context) {
@@ -111,9 +119,7 @@ class _HomePageState extends State<HomePage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.blueGrey[700],
-            ),
+            style: TextButton.styleFrom(foregroundColor: Colors.blueGrey[700]),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -236,13 +242,15 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.teal[50],
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(Icons.account_circle, color: Colors.teal[700], size: 36),
+          CircleAvatar(
+            radius: 30,
+            backgroundColor: Colors.teal[50],
+            backgroundImage: _avatarUrl != null
+                ? NetworkImage(_avatarUrl!)
+                : null,
+            child: _avatarUrl == null
+                ? Icon(Icons.account_circle, color: Colors.teal[700], size: 36)
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(

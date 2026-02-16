@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -7,7 +8,9 @@ import 'package:path_provider/path_provider.dart';
 import 'services/api_service.dart';
 import 'services/voice_recorder_service.dart';
 import 'services/file_cache_service.dart';
+import 'services/local_users_db_service.dart';
 import 'services/pending_chat_queue_service.dart';
+import 'services/chat_sync_service.dart';
 
 class ChatroomPage extends StatefulWidget {
   final Map<String, dynamic>? initialUser;
@@ -46,6 +49,15 @@ class _ChatroomPageState extends State<ChatroomPage> {
   List<double> _waveformData = []; // داده‌های نمودار صوتی
   final Set<String> _downloadingAttachmentKeys = <String>{};
   final Map<String, String> _downloadedAttachmentPaths = <String, String>{};
+  final Set<int> _resolvingVoiceDurationIds = <int>{};
+  final Set<String> _failedVoiceDurationKeys = <String>{};
+  bool _isPrimingChatsCache = false;
+  static const Duration _minVoiceDuration = Duration(seconds: 1);
+  StreamSubscription<Duration>? _voicePositionSubscription;
+  StreamSubscription<dynamic>? _voiceStateSubscription;
+  int? _activeVoiceMessageId;
+  Duration _activeVoicePosition = Duration.zero;
+  Duration _activeVoiceDuration = Duration.zero;
 
   // Image picker
   final ImagePicker _picker = ImagePicker();
@@ -57,8 +69,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
     // Log API configuration for this session
     ApiService.logCurrentConfig();
 
-    _initializeChat();
-
     // If standalone mode with initialUser, set immediately
     if (widget.initialUser != null) {
       _selectedUser = widget.initialUser;
@@ -68,6 +78,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
     _loadUserData().then((_) async {
       // Always load available users, regardless of authentication status
       await _loadAvailableUsers();
+
+      await _startBackgroundChatSync();
 
       // If a chat partner is already selected, refresh messages on page open
       if (_selectedUser != null) {
@@ -81,6 +93,50 @@ class _ChatroomPageState extends State<ChatroomPage> {
     _messageController.addListener(() {
       setState(() {
         // This will update the send button icon based on text content
+      });
+    });
+
+    _voicePositionSubscription = _voiceRecorder.positionStream.listen((
+      position,
+    ) {
+      if (!mounted || _activeVoiceMessageId == null) return;
+      setState(() {
+        _activeVoicePosition = position;
+        final maybeDuration = _voiceRecorder.duration;
+        if (maybeDuration != null && maybeDuration > Duration.zero) {
+          _activeVoiceDuration = maybeDuration;
+        }
+      });
+    });
+
+    _voiceStateSubscription = _voiceRecorder.playerStateStream.listen((state) {
+      final processingState = state.processingState.toString().toLowerCase();
+      final isCompleted = processingState.contains('completed');
+      if (!mounted || !isCompleted) return;
+
+      setState(() {
+        _activeVoiceMessageId = null;
+        _activeVoicePosition = Duration.zero;
+        _activeVoiceDuration = Duration.zero;
+        _messages = _messages
+            .map(
+              (m) => ChatMessage(
+                id: m.id,
+                value: m.value,
+                fileUrl: m.fileUrl,
+                fileUrlThumb: m.fileUrlThumb,
+                date: m.date,
+                userId: m.userId,
+                isSent: m.isSent,
+                status: m.status,
+                isMine: m.isMine,
+                sender: m.sender,
+                messageType: m.messageType,
+                duration: m.duration,
+                isPlaying: false,
+              ),
+            )
+            .toList();
       });
     });
   }
@@ -118,76 +174,12 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Future<void> _loadAvailableUsers() async {
     try {
       setState(() => _isLoadingUsers = true);
-
-      // Get users from API
-      final users = await ApiService.getAllUsers();
-
-      if (users.isNotEmpty) {
-        // Transform API user data to match UI requirements
-        final transformedUsers = users.map((user) {
-          // Debug: Print user data to see what we're getting
-          print('User data: ${user.toString()}');
-          return {
-            'id': user['id'] ?? 0,
-            'firstName': user['firstName'] ?? 'Unknown',
-            'lastName': user['lastName'] ?? 'User',
-            'picUrlAvatar':
-                user['picUrlAvatar'] ??
-                user['picUrlAvatarThumb'] ??
-                user['avatarUrl'] ??
-                user['avatar'] ??
-                user['profileImage'] ??
-                '', // Store raw URL
-            'userName': user['userName'] ?? '',
-            'email': user['email'] ?? '',
-            'isOnline':
-                true, // Default to online, can be updated with real status
-            'lastMessage': 'Available for chat',
-            'lastMessageTime': DateTime.now().subtract(
-              const Duration(minutes: 1),
-            ),
-            'unreadCount': 0,
-          };
-        }).toList();
-
-        setState(() {
-          _availableUsers = transformedUsers;
-          _isLoadingUsers = false;
-        });
-      } else {
-        // Fallback to mock data if API fails or no users found
-        final mockUsers = [
-          {
-            'id': 1,
-            'firstName': 'Ahmad',
-            'lastName': 'Hassan',
-            'picUrlAvatar': '/content/user/thumb/ahmad_avatar.png',
-            'isOnline': true,
-            'lastMessage': 'Hello! How can I help you today?',
-            'lastMessageTime': DateTime.now().subtract(
-              const Duration(minutes: 5),
-            ),
-            'unreadCount': 2,
-          },
-          {
-            'id': 2,
-            'firstName': 'Sara',
-            'lastName': 'Ali',
-            'picUrlAvatar': '/content/user/thumb/sara_avatar.png',
-            'isOnline': false,
-            'lastMessage': 'Thanks for the transaction details.',
-            'lastMessageTime': DateTime.now().subtract(
-              const Duration(hours: 2),
-            ),
-            'unreadCount': 0,
-          },
-        ];
-
-        setState(() {
-          _availableUsers = mockUsers;
-          _isLoadingUsers = false;
-        });
-      }
+      final cachedUsers = await LocalUsersDbService.getUsers();
+      if (!mounted) return;
+      setState(() {
+        _availableUsers = cachedUsers;
+        _isLoadingUsers = false;
+      });
     } catch (e) {
       setState(() => _isLoadingUsers = false);
       if (mounted) {
@@ -198,6 +190,86 @@ class _ChatroomPageState extends State<ChatroomPage> {
           ),
         );
       }
+    }
+  }
+
+  Future<void> _refreshUsersFromLocalDb() async {
+    final cachedUsers = await LocalUsersDbService.getUsers();
+    if (!mounted) return;
+    setState(() {
+      _availableUsers = cachedUsers;
+    });
+  }
+
+  Future<bool> _loadSelectedChatFromLocalDb() async {
+    final selectedUserId = int.tryParse('${_selectedUser?['id'] ?? ''}');
+    if (selectedUserId == null) return false;
+
+    final cachedMessages = await LocalUsersDbService.getCachedMessagesForUser(
+      selectedUserId,
+    );
+    if (cachedMessages.isEmpty || !mounted) return false;
+
+    final parsedCached =
+        cachedMessages.map(_mapStoredMessageToChatMessage).toList()
+          ..sort((a, b) => a.date.compareTo(b.date));
+
+    setState(() {
+      _messages = _mergeMessages(_messages, parsedCached);
+    });
+    _scrollToBottom();
+    return true;
+  }
+
+  Future<void> _startBackgroundChatSync() async {
+    await ChatSyncService.start(
+      interval: const Duration(seconds: 30),
+      onSynced: () async {
+        if (!mounted) return;
+        await _refreshUsersFromLocalDb();
+        await _loadSelectedChatFromLocalDb();
+      },
+    );
+  }
+
+  Future<void> _primeChatsCacheFromApi(List<Map<String, dynamic>> users) async {
+    if (_isPrimingChatsCache) return;
+    if (_userInfo == null) return;
+
+    _isPrimingChatsCache = true;
+    try {
+      for (final user in users) {
+        final targetUserId = int.tryParse('${user['id'] ?? ''}');
+        if (targetUserId == null || targetUserId <= 0) continue;
+
+        final myUserId = int.tryParse('${_userInfo?['id'] ?? ''}');
+        if (myUserId != null && targetUserId == myUserId) continue;
+
+        final lastMsgId =
+            await LocalUsersDbService.getLastCachedMessageIdForUser(
+              targetUserId,
+            );
+        final response = await ApiService.getChatDetails(
+          targetUserId,
+          msgId: lastMsgId,
+        );
+        if (response == null) continue;
+
+        final messages =
+            response['messages'] as List<Map<String, dynamic>>? ?? const [];
+        if (messages.isEmpty) continue;
+
+        await LocalUsersDbService.cacheMessagesForUserChat(
+          userId: targetUserId,
+          messages: messages.map(_mapApiMessageToCachePayload).toList(),
+        );
+      }
+
+      await _refreshUsersFromLocalDb();
+    } catch (e) {
+      print('Error priming chats cache: $e');
+    } finally {
+      _isPrimingChatsCache = false;
     }
   }
 
@@ -215,53 +287,29 @@ class _ChatroomPageState extends State<ChatroomPage> {
     await _flushPendingQueue();
   }
 
-  void _initializeChat() {
-    _messages = [
-      ChatMessage(
-        id: 1,
-        value: 'Welcome to Katawaz Exchange! 👋',
-        date: DateTime.now().subtract(const Duration(minutes: 30)),
-        userId: 0,
-        isSent: true,
-        status: 'Delivered',
-        isMine: false,
-        sender: 'Admin',
-        messageType: MessageType.text,
-      ),
-      ChatMessage(
-        id: 2,
-        value: 'Exchange rates updated successfully ✅',
-        date: DateTime.now().subtract(const Duration(minutes: 15)),
-        userId: 0,
-        isSent: true,
-        status: 'Delivered',
-        isMine: false,
-        sender: 'System',
-        messageType: MessageType.text,
-      ),
-      ChatMessage(
-        id: 3,
-        value: 'How can we help you today?',
-        date: DateTime.now().subtract(const Duration(minutes: 5)),
-        userId: 0,
-        isSent: true,
-        status: 'Delivered',
-        isMine: false,
-        sender: 'Support',
-        messageType: MessageType.text,
-      ),
-    ];
-  }
-
   Future<void> _loadChatMessages() async {
-    // Only load messages from API if user is authenticated and userId is available
-    if (_userInfo != null && _chatMasterId != null) {
+    final selectedUserId = int.tryParse('${_selectedUser?['id'] ?? ''}');
+
+    final hasLocalData = await _loadSelectedChatFromLocalDb();
+
+    if (hasLocalData) {
+      return;
+    }
+
+    // Then fetch ONLY new messages from API (using last local msgId)
+    if (_userInfo != null && selectedUserId != null) {
       try {
-        print('🔍 DEBUG Line 207: _userInfo ID = ${_userInfo!['id']}');
-        print('🔍 DEBUG Line 207: _chatMasterId = $_chatMasterId');
-        print('🔍 DEBUG Line 207: Selected user = $_selectedUser');
-        // Use the selected user's ID (_chatMasterId) instead of current user's ID
-        final response = await ApiService.getChatDetails(_chatMasterId!);
+        final targetUserId = selectedUserId;
+        final lastMsgId =
+            await LocalUsersDbService.getLastCachedMessageIdForUser(
+              targetUserId,
+            );
+
+        // Fetch by target user id; msgId is per-chat based on local cache
+        final response = await ApiService.getChatDetails(
+          targetUserId,
+          msgId: lastMsgId,
+        );
         if (response != null) {
           // Extract ChatMasterId from API response - this is unique for each chat partner
           final chatMasterId = response['chatMasterId'];
@@ -270,114 +318,51 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
           if (chatMasterId != null) {
             _chatMasterId = chatMasterId;
-            print(
-              '🔍 Updated _chatMasterId from getChatDetails: $_chatMasterId',
-            );
           }
 
-          setState(() {
-            // Clear previous messages before loading new chat
-            _messages.clear();
+          final parsedMessages =
+              messages.map(_mapApiMessageToChatMessage).toList()
+                ..sort((a, b) => a.date.compareTo(b.date));
 
-            if (messages.isNotEmpty) {
-              // Debug: print raw first message to see structure
-              print('🔍 Raw first message: ${messages.first}');
-              print('🔍 Message type: ${messages.first.runtimeType}');
+          if (parsedMessages.isNotEmpty) {
+            await LocalUsersDbService.cacheMessagesForUserChat(
+              userId: selectedUserId,
+              messages: parsedMessages
+                  .map(
+                    (message) => {
+                      'id': message.id,
+                      'value': message.value,
+                      'fileUrl': message.fileUrl,
+                      'fileUrlThumb': message.fileUrlThumb,
+                      'date': message.date,
+                      'userId': message.userId,
+                      'isSent': message.isSent,
+                      'status': message.status,
+                      'isMine': message.isMine,
+                      'messageType': message.messageType.name,
+                    },
+                  )
+                  .toList(),
+            );
+            await _refreshUsersFromLocalDb();
 
-              _messages.addAll(
-                messages.map((msg) {
-                  // Parse new API format with proper type conversion
-                  final messageId =
-                      int.tryParse((msg['Id'] ?? msg['id'] ?? 0).toString()) ??
-                      0;
-                  final messageValue = (msg['Value'] ?? msg['value'] ?? '')
-                      .toString();
-                  final fileUrl = (msg['FileUrl'] ?? msg['fileUrl'])
-                      ?.toString();
-                  final fileUrlThumb =
-                      (msg['FileUrlThumb'] ?? msg['fileUrlThumb'])?.toString();
-                  final dateString = (msg['Date'] ?? msg['date'] ?? '')
-                      .toString();
-                  final messageDate =
-                      DateTime.tryParse(dateString) ?? DateTime.now();
-                  final senderId =
-                      int.tryParse(
-                        (msg['UserId'] ?? msg['userId'] ?? 0).toString(),
-                      ) ??
-                      0;
-                  final isSent =
-                      (msg['IsSent'] ?? msg['isSent'] ?? false) == true;
-                  final messageStatus =
-                      (msg['Status'] ?? msg['status'] ?? 'None').toString();
-                  final isMine =
-                      (msg['IsMine'] ?? msg['isMine'] ?? false) == true;
-
-                  print(
-                    '🔍 Parsing message: id=$messageId, value=$messageValue, fileUrl=$fileUrl',
-                  );
-
-                  // Determine message type based on file URL
-                  MessageType msgType = MessageType.text;
-                  String? fullFileUrl = fileUrl;
-
-                  if (fileUrl != null && fileUrl.isNotEmpty) {
-                    // Construct full URL if fileUrl is relative path
-                    if (!fileUrl.startsWith('http')) {
-                      final imageUrl = ApiService.getImageUrl();
-                      fullFileUrl = '$imageUrl/$fileUrl';
-                    }
-
-                    // Determine message type based on file extension
-                    final lowerUrl = fileUrl.toLowerCase();
-                    print('🔍 Checking file URL: $lowerUrl');
-
-                    if (lowerUrl.contains('.mp3') ||
-                        lowerUrl.contains('.wav') ||
-                        lowerUrl.contains('.m4a') ||
-                        lowerUrl.contains('.aac') || // Added .aac support
-                        lowerUrl.contains('.ogg')) {
-                      msgType = MessageType.voice;
-                      print('✅ Detected as VOICE');
-                    } else if (lowerUrl.contains('.jpg') ||
-                        lowerUrl.contains('.png') ||
-                        lowerUrl.contains('.jpeg') ||
-                        lowerUrl.contains('.gif') ||
-                        lowerUrl.contains('.webp')) {
-                      msgType = MessageType.image;
-                      print('✅ Detected as IMAGE');
-                    } else {
-                      msgType = MessageType.file;
-                      print('✅ Detected as FILE');
-                    }
-                  }
-
-                  // Debug print
-                  if (msgType == MessageType.voice) {
-                    print(
-                      '📢 Voice message detected: value=$messageValue, fileUrl=$fullFileUrl, msgType=$msgType',
-                    );
-                  }
-
-                  return ChatMessage(
-                    id: messageId,
-                    value: messageValue,
-                    fileUrl:
-                        fullFileUrl, // Use full URL instead of relative path
-                    fileUrlThumb: fileUrlThumb,
-                    date: messageDate,
-                    userId: senderId,
-                    isSent: isSent,
-                    status: messageStatus,
-                    isMine: isMine,
-                    sender: isMine
-                        ? _currentUserName
-                        : (_selectedUser?['firstName'] ?? 'Unknown'),
-                    messageType: msgType,
-                  );
-                }).toList(),
-              );
+            final mergedFromDb =
+                await LocalUsersDbService.getCachedMessagesForUser(
+                  selectedUserId,
+                );
+            if (mounted) {
+              setState(() {
+                final mergedMessages =
+                    mergedFromDb.map(_mapStoredMessageToChatMessage).toList()
+                      ..sort((a, b) => a.date.compareTo(b.date));
+                _messages = _mergeMessages(_messages, mergedMessages);
+              });
             }
-          });
+          }
+
+          if (_messages.isNotEmpty) {
+            _scrollToBottom();
+          }
         }
       } catch (e) {
         print('Error loading chat messages: $e');
@@ -400,7 +385,244 @@ class _ChatroomPageState extends State<ChatroomPage> {
           ),
         );
       });
+      _scrollToBottom();
     }
+  }
+
+  ChatMessage _mapStoredMessageToChatMessage(Map<String, dynamic> msg) {
+    final messageId = int.tryParse('${msg['id'] ?? 0}') ?? 0;
+    final messageValue = (msg['value'] ?? '').toString();
+    final storedType = (msg['messageType'] ?? 'text').toString().toLowerCase();
+    final messageDate = msg['date'] is DateTime
+        ? msg['date'] as DateTime
+        : DateTime.now();
+    final senderId = int.tryParse('${msg['userId'] ?? 0}') ?? 0;
+    final isSent = msg['isSent'] == true;
+    final messageStatus = (msg['status'] ?? 'None').toString();
+    final isMine = msg['isMine'] == true;
+    final fileUrl = (msg['fileUrl'] ?? '').toString();
+    final fileThumb = (msg['fileUrlThumb'] ?? '').toString();
+
+    MessageType msgType;
+    switch (storedType) {
+      case 'voice':
+        msgType = MessageType.voice;
+        break;
+      case 'image':
+        msgType = MessageType.image;
+        break;
+      case 'file':
+        msgType = MessageType.file;
+        break;
+      default:
+        msgType = MessageType.text;
+    }
+
+    return ChatMessage(
+      id: messageId,
+      value: messageValue,
+      fileUrl: fileUrl.isNotEmpty ? fileUrl : null,
+      fileUrlThumb: fileThumb.isNotEmpty ? fileThumb : null,
+      date: messageDate,
+      userId: senderId,
+      isSent: isSent,
+      status: messageStatus,
+      isMine: isMine,
+      sender: isMine
+          ? _currentUserName
+          : (_selectedUser?['firstName'] ?? 'Unknown'),
+      messageType: msgType,
+    );
+  }
+
+  List<ChatMessage> _mergeMessages(
+    List<ChatMessage> existing,
+    List<ChatMessage> incoming,
+  ) {
+    final mergedByKey = <String, ChatMessage>{
+      for (final message in existing) _messageMergeKey(message): message,
+    };
+
+    for (final message in incoming) {
+      mergedByKey[_messageMergeKey(message)] = message;
+    }
+
+    final merged = mergedByKey.values.toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+    return merged;
+  }
+
+  String _messageMergeKey(ChatMessage message) {
+    if (message.id > 0) {
+      return 'id:${message.id}';
+    }
+    return 'tmp:${message.userId}:${message.isMine}:${message.date.millisecondsSinceEpoch}:${message.value}';
+  }
+
+  ChatMessage _mapApiMessageToChatMessage(Map<String, dynamic> msg) {
+    final messageId =
+        int.tryParse((msg['Id'] ?? msg['id'] ?? 0).toString()) ?? 0;
+    final messageValue = (msg['Value'] ?? msg['value'] ?? '').toString();
+    final rawFileUrl = _readStringFromKeys(msg, const [
+      'FileUrl',
+      'fileUrl',
+      'AttachmentFileUrl',
+      'attachmentFileUrl',
+      'AttachmentUrl',
+      'attachmentUrl',
+      'VoiceUrl',
+      'voiceUrl',
+      'ImageUrl',
+      'imageUrl',
+      'Url',
+      'url',
+      'FilePath',
+      'filePath',
+    ]);
+    final rawFileUrlThumb = _readStringFromKeys(msg, const [
+      'FileUrlThumb',
+      'fileUrlThumb',
+      'ThumbUrl',
+      'thumbUrl',
+      'ThumbnailUrl',
+      'thumbnailUrl',
+    ]);
+    final rawType =
+        _readStringFromKeys(msg, const [
+          'Type',
+          'type',
+          'AttachmentType',
+          'attachmentType',
+          'MessageType',
+          'messageType',
+          'Kind',
+          'kind',
+        ]) ??
+        '';
+    final dateString = (msg['Date'] ?? msg['date'] ?? '').toString();
+    final messageDate = DateTime.tryParse(dateString) ?? DateTime.now();
+    final senderId =
+        int.tryParse((msg['UserId'] ?? msg['userId'] ?? 0).toString()) ?? 0;
+    final isSent = (msg['IsSent'] ?? msg['isSent'] ?? false) == true;
+    final messageStatus = (msg['Status'] ?? msg['status'] ?? 'None').toString();
+    final isMine = (msg['IsMine'] ?? msg['isMine'] ?? false) == true;
+
+    final fileUrl = (rawFileUrl != null && rawFileUrl.isNotEmpty)
+        ? _buildRemoteFileUrl(rawFileUrl)
+        : null;
+    final fileUrlThumb = (rawFileUrlThumb != null && rawFileUrlThumb.isNotEmpty)
+        ? _buildRemoteFileUrl(rawFileUrlThumb)
+        : null;
+
+    var msgType = _resolveMessageType(
+      rawType: rawType,
+      fileUrl: rawFileUrl,
+      fileUrlThumb: rawFileUrlThumb,
+      value: messageValue,
+    );
+
+    String? fullFileUrl = fileUrl;
+    if (fullFileUrl == null && msgType == MessageType.image) {
+      fullFileUrl = fileUrlThumb;
+    }
+
+    return ChatMessage(
+      id: messageId,
+      value: messageValue,
+      fileUrl: fullFileUrl,
+      fileUrlThumb: fileUrlThumb,
+      date: messageDate,
+      userId: senderId,
+      isSent: isSent,
+      status: messageStatus,
+      isMine: isMine,
+      sender: isMine
+          ? _currentUserName
+          : (_selectedUser?['firstName'] ?? 'Unknown'),
+      messageType: msgType,
+      duration: msgType == MessageType.voice
+          ? _extractVoiceDuration(msg)
+          : null,
+    );
+  }
+
+  Map<String, dynamic> _mapApiMessageToCachePayload(Map<String, dynamic> msg) {
+    final messageId =
+        int.tryParse((msg['Id'] ?? msg['id'] ?? 0).toString()) ?? 0;
+    final messageValue = (msg['Value'] ?? msg['value'] ?? '').toString();
+    final rawFileUrl = _readStringFromKeys(msg, const [
+      'FileUrl',
+      'fileUrl',
+      'AttachmentFileUrl',
+      'attachmentFileUrl',
+      'AttachmentUrl',
+      'attachmentUrl',
+      'VoiceUrl',
+      'voiceUrl',
+      'ImageUrl',
+      'imageUrl',
+      'Url',
+      'url',
+      'FilePath',
+      'filePath',
+    ]);
+    final rawFileUrlThumb = _readStringFromKeys(msg, const [
+      'FileUrlThumb',
+      'fileUrlThumb',
+      'ThumbUrl',
+      'thumbUrl',
+      'ThumbnailUrl',
+      'thumbnailUrl',
+    ]);
+    final rawType =
+        _readStringFromKeys(msg, const [
+          'Type',
+          'type',
+          'AttachmentType',
+          'attachmentType',
+          'MessageType',
+          'messageType',
+          'Kind',
+          'kind',
+        ]) ??
+        '';
+    final dateString = (msg['Date'] ?? msg['date'] ?? '').toString();
+    final messageDate = DateTime.tryParse(dateString) ?? DateTime.now();
+    final senderId =
+        int.tryParse((msg['UserId'] ?? msg['userId'] ?? 0).toString()) ?? 0;
+    final isSent = (msg['IsSent'] ?? msg['isSent'] ?? false) == true;
+    final messageStatus = (msg['Status'] ?? msg['status'] ?? 'None').toString();
+    final isMine = (msg['IsMine'] ?? msg['isMine'] ?? false) == true;
+
+    final msgType = _resolveMessageType(
+      rawType: rawType,
+      fileUrl: rawFileUrl,
+      fileUrlThumb: rawFileUrlThumb,
+      value: messageValue,
+    );
+
+    String? fullFileUrl = rawFileUrl != null && rawFileUrl.isNotEmpty
+        ? _buildRemoteFileUrl(rawFileUrl)
+        : null;
+    final fullFileThumb = rawFileUrlThumb != null && rawFileUrlThumb.isNotEmpty
+        ? _buildRemoteFileUrl(rawFileUrlThumb)
+        : null;
+    if (fullFileUrl == null && msgType == MessageType.image) {
+      fullFileUrl = fullFileThumb;
+    }
+
+    return {
+      'id': messageId,
+      'value': messageValue,
+      'fileUrl': fullFileUrl,
+      'fileUrlThumb': fullFileThumb,
+      'date': messageDate,
+      'userId': senderId,
+      'isSent': isSent,
+      'status': messageStatus,
+      'isMine': isMine,
+      'messageType': msgType.name,
+    };
   }
 
   // Message status tracking methods
@@ -454,6 +676,12 @@ class _ChatroomPageState extends State<ChatroomPage> {
     if (unseenMessageIds.isNotEmpty) {
       await _markMessagesAsSeen(unseenMessageIds);
     }
+
+    final selectedUserId = int.tryParse('${_selectedUser?['id'] ?? ''}');
+    if (selectedUserId != null) {
+      await LocalUsersDbService.markUserChatAsSeen(selectedUserId);
+      await _refreshUsersFromLocalDb();
+    }
   }
 
   ChatMessage _copyMessageWithStatus(
@@ -477,6 +705,33 @@ class _ChatroomPageState extends State<ChatroomPage> {
       duration: message.duration,
       isPlaying: message.isPlaying,
     );
+  }
+
+  Future<void> _cacheSingleMessageForSelectedChat(
+    ChatMessage message, {
+    required bool includeServerId,
+  }) async {
+    final selectedUserId = int.tryParse('${_selectedUser?['id'] ?? ''}');
+    if (selectedUserId == null) return;
+
+    await LocalUsersDbService.cacheMessagesForUserChat(
+      userId: selectedUserId,
+      messages: [
+        {
+          'id': includeServerId ? message.id : null,
+          'value': message.value,
+          'fileUrl': message.fileUrl,
+          'fileUrlThumb': message.fileUrlThumb,
+          'date': message.date,
+          'userId': message.userId,
+          'isSent': message.isSent,
+          'status': message.status,
+          'isMine': message.isMine,
+          'messageType': message.messageType.name,
+        },
+      ],
+    );
+    await _refreshUsersFromLocalDb();
   }
 
   void _markMessagePending(int localId) {
@@ -562,6 +817,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
       _messages.add(message);
     });
 
+    await _cacheSingleMessageForSelectedChat(message, includeServerId: false);
+
     _messageController.clear();
     _scrollToBottom();
 
@@ -578,25 +835,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
             localId: tempId,
             type: 'text',
             value: messageText,
-          );
-          // Show error if message failed to send
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Message saved locally. Will resend when online.',
-                textAlign: TextAlign.center,
-              ),
-              backgroundColor: Colors.orange,
-              behavior: SnackBarBehavior.floating,
-              margin: EdgeInsets.only(
-                top: MediaQuery.of(context).padding.top + 10,
-                left: 20,
-                right: 20,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
           );
         } else {
           // API returned success - update message status to show check mark
@@ -617,6 +855,15 @@ class _ChatroomPageState extends State<ChatroomPage> {
             }
           });
 
+          final updatedMessage = _messages.firstWhere(
+            (m) => m.id == (result.containsKey('id') ? result['id'] : tempId),
+            orElse: () => message,
+          );
+          await _cacheSingleMessageForSelectedChat(
+            updatedMessage,
+            includeServerId: true,
+          );
+
           // Mark message as delivered if ID is available
           if (result.containsKey('id') && result['id'] != null) {
             await ApiService.updateChatDetailStatus(
@@ -632,55 +879,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
           type: 'text',
           value: messageText,
         );
-        // Show error message
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Message saved locally. Will resend when online.',
-              textAlign: TextAlign.center,
-            ),
-            backgroundColor: Colors.orange,
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.only(
-              top: MediaQuery.of(context).padding.top + 10,
-              left: 20,
-              right: 20,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
       }
-    } else {
-      // Guest mode - show info message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            'Message sent in guest mode. Login to sync with server.',
-            textAlign: TextAlign.center,
-          ),
-          backgroundColor: Colors.blue,
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(
-            top: MediaQuery.of(context).padding.top + 10,
-            left: 20,
-            right: 20,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ),
-      );
     }
   }
 
   // Voice recording methods
   // Send voice message to API
   Future<void> _sendVoiceMessage(String recordingPath) async {
-    // Get audio duration
-    final duration = await _voiceRecorder.getAudioDuration(recordingPath);
-
     // Create voice message
     final tempId = DateTime.now().millisecondsSinceEpoch;
     final voiceMessage = ChatMessage(
@@ -694,12 +899,17 @@ class _ChatroomPageState extends State<ChatroomPage> {
       fileUrl: recordingPath,
       sender: _currentUserName,
       messageType: MessageType.voice,
-      duration: duration,
+      duration: null,
     );
 
     setState(() {
       _messages.add(voiceMessage);
     });
+
+    await _cacheSingleMessageForSelectedChat(
+      voiceMessage,
+      includeServerId: false,
+    );
 
     _scrollToBottom();
 
@@ -741,6 +951,15 @@ class _ChatroomPageState extends State<ChatroomPage> {
             }
           });
 
+          final updatedVoiceMessage = _messages.firstWhere(
+            (m) => m.id == (result.containsKey('id') ? result['id'] : tempId),
+            orElse: () => voiceMessage,
+          );
+          await _cacheSingleMessageForSelectedChat(
+            updatedVoiceMessage,
+            includeServerId: true,
+          );
+
           // Mark voice message as delivered
           if (result.containsKey('id') && result['id'] != null) {
             await ApiService.updateChatDetailStatus(
@@ -748,52 +967,12 @@ class _ChatroomPageState extends State<ChatroomPage> {
               status: 'Delivered',
             );
           }
-
-          // Show success feedback
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Voice message sent!',
-                textAlign: TextAlign.center,
-              ),
-              duration: const Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-              margin: EdgeInsets.only(
-                top: MediaQuery.of(context).padding.top + 10,
-                left: 20,
-                right: 20,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              backgroundColor: Colors.green,
-            ),
-          );
         } else {
-          // Show error feedback
           await _enqueuePendingItem(
             localId: tempId,
             type: 'voice',
             value: 'Voice message',
             filePath: recordingPath,
-          );
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Voice saved locally. Will resend when online.',
-                textAlign: TextAlign.center,
-              ),
-              backgroundColor: Colors.orange,
-              behavior: SnackBarBehavior.floating,
-              margin: EdgeInsets.only(
-                top: MediaQuery.of(context).padding.top + 10,
-                left: 20,
-                right: 20,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
           );
         }
       } catch (e) {
@@ -804,56 +983,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
           value: 'Voice message',
           filePath: recordingPath,
         );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Voice saved locally. Will resend when online.',
-              textAlign: TextAlign.center,
-            ),
-            backgroundColor: Colors.orange,
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.only(
-              top: MediaQuery.of(context).padding.top + 10,
-              left: 20,
-              right: 20,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
       }
-    } else {
-      // Show error if requirements not met
-      String errorMessage = '';
-      if (_userInfo == null) {
-        errorMessage = 'Please login to send voice messages';
-      } else if (_selectedUser == null) {
-        errorMessage = 'Please select a user to send voice message to';
-      } else if (_chatMasterId == null) {
-        errorMessage = 'Chat not initialized properly';
-      } else {
-        errorMessage = 'Voice message sent in guest mode!';
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errorMessage, textAlign: TextAlign.center),
-          backgroundColor: errorMessage.contains('guest')
-              ? Colors.green
-              : Colors.orange,
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(
-            top: MediaQuery.of(context).padding.top + 10,
-            left: 20,
-            right: 20,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ),
-      );
     }
   }
 
@@ -883,6 +1013,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
         setState(() {
           _messages.add(imageMessage);
         });
+
+        await _cacheSingleMessageForSelectedChat(
+          imageMessage,
+          includeServerId: false,
+        );
 
         _scrollToBottom();
 
@@ -926,6 +1061,16 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 }
               });
 
+              final updatedImageMessage = _messages.firstWhere(
+                (m) =>
+                    m.id == (result.containsKey('id') ? result['id'] : tempId),
+                orElse: () => imageMessage,
+              );
+              await _cacheSingleMessageForSelectedChat(
+                updatedImageMessage,
+                includeServerId: true,
+              );
+
               // Mark image message as delivered
               if (result.containsKey('id') && result['id'] != null) {
                 await ApiService.updateChatDetailStatus(
@@ -933,13 +1078,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
                   status: 'Delivered',
                 );
               }
-
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Photo sent!'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
             } else {
               await _enqueuePendingItem(
                 localId: tempId,
@@ -947,14 +1085,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 value: 'Photo',
                 filePath: photo.path,
                 attachmentType: 'Image',
-              );
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Photo saved locally. Will resend when online.',
-                  ),
-                  backgroundColor: Colors.orange,
-                ),
               );
             }
           } catch (e) {
@@ -966,35 +1096,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
               filePath: photo.path,
               attachmentType: 'Image',
             );
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Photo saved locally. Will resend when online.'),
-                backgroundColor: Colors.orange,
-              ),
-            );
           }
-        } else {
-          // Show error if requirements not met
-          String errorMessage = '';
-          if (_userInfo == null) {
-            errorMessage = 'Please login to send photos';
-          } else if (_selectedUser == null) {
-            errorMessage = 'Please select a user to send photo to';
-          } else if (_chatMasterId == null) {
-            errorMessage = 'Chat not initialized properly';
-          } else {
-            errorMessage = 'Photo sent in guest mode!';
-          }
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(errorMessage),
-              backgroundColor: errorMessage.contains('guest')
-                  ? Colors.green
-                  : Colors.orange,
-              duration: const Duration(seconds: 2),
-            ),
-          );
         }
       }
     } catch (e) {
@@ -1033,6 +1135,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
         setState(() {
           _messages.add(imageMessage);
         });
+
+        await _cacheSingleMessageForSelectedChat(
+          imageMessage,
+          includeServerId: false,
+        );
 
         _scrollToBottom();
 
@@ -1078,11 +1185,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 }
               });
 
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Image sent!'),
-                  duration: Duration(seconds: 2),
-                ),
+              final updatedGalleryMessage = _messages.firstWhere(
+                (m) => m.id == (result['id'] ?? imageMessage.id),
+                orElse: () => imageMessage,
+              );
+              await _cacheSingleMessageForSelectedChat(
+                updatedGalleryMessage,
+                includeServerId: true,
               );
             } else {
               await _enqueuePendingItem(
@@ -1091,14 +1200,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
                 value: imageMessage.value,
                 filePath: image.path,
                 attachmentType: 'Image',
-              );
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Image saved locally. Will resend when online.',
-                  ),
-                  backgroundColor: Colors.orange,
-                ),
               );
             }
           } catch (e) {
@@ -1110,35 +1211,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
               filePath: image.path,
               attachmentType: 'Image',
             );
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Image saved locally. Will resend when online.'),
-                backgroundColor: Colors.orange,
-              ),
-            );
           }
-        } else {
-          // Show error if requirements not met
-          String errorMessage = '';
-          if (_userInfo == null) {
-            errorMessage = 'Please login to send images';
-          } else if (_selectedUser == null) {
-            errorMessage = 'Please select a user to send image to';
-          } else if (_chatMasterId == null) {
-            errorMessage = 'Chat not initialized properly';
-          } else {
-            errorMessage = 'Image sent in guest mode!';
-          }
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(errorMessage),
-              backgroundColor: errorMessage.contains('guest')
-                  ? Colors.green
-                  : Colors.orange,
-              duration: const Duration(seconds: 2),
-            ),
-          );
         }
       }
     } catch (e) {
@@ -1570,6 +1643,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Widget _buildCircularUserItem(Map<String, dynamic> user, bool isSelected) {
     final fullName = '${user['firstName']} ${user['lastName']}';
     final avatarUrl = user['picUrlAvatar'] ?? '';
+    final unreadRaw = user['unreadCount'];
+    final unreadCount = unreadRaw is int
+        ? unreadRaw
+        : int.tryParse('${unreadRaw ?? 0}') ?? 0;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
@@ -1587,38 +1664,57 @@ class _ChatroomPageState extends State<ChatroomPage> {
             ),
             borderRadius: BorderRadius.circular(30),
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(28),
-            child: Container(
-              width: 56,
-              height: 56,
-              color: const Color(0xFF075E54),
-              child: () {
-                final url = ApiService.getFullAvatarUrl(avatarUrl);
-                return url != null
-                    ? Image.network(
-                        url,
-                        width: 56,
-                        height: 56,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return const Center(
-                            child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  color: const Color(0xFF075E54),
+                  child: () {
+                    final url = ApiService.getFullAvatarUrl(avatarUrl);
+                    return url != null
+                        ? Image.network(
+                            url,
+                            width: 56,
+                            height: 56,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return const Center(
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          print('Error loading avatar for $fullName: $error');
-                          return Center(
+                              );
+                            },
+                            errorBuilder: (context, error, stackTrace) {
+                              print(
+                                'Error loading avatar for $fullName: $error',
+                              );
+                              return Center(
+                                child: Text(
+                                  fullName.isNotEmpty
+                                      ? fullName[0].toUpperCase()
+                                      : '?',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              );
+                            },
+                          )
+                        : Center(
                             child: Text(
                               fullName.isNotEmpty
                                   ? fullName[0].toUpperCase()
@@ -1630,20 +1726,39 @@ class _ChatroomPageState extends State<ChatroomPage> {
                               ),
                             ),
                           );
-                        },
-                      )
-                    : Center(
-                        child: Text(
-                          fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        ),
-                      );
-              }(),
-            ),
+                  }(),
+                ),
+              ),
+              if (unreadCount > 0)
+                Positioned(
+                  top: -2,
+                  right: -2,
+                  child: Container(
+                    constraints: const BoxConstraints(
+                      minWidth: 18,
+                      minHeight: 18,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE53935),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white, width: 1.4),
+                    ),
+                    child: Text(
+                      unreadCount > 99 ? '99+' : '$unreadCount',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -1871,7 +1986,11 @@ class _ChatroomPageState extends State<ChatroomPage> {
     }
 
     try {
-      await _voiceRecorder.startRecording();
+      final didStart = await _voiceRecorder.startRecording();
+      if (!didStart) {
+        return;
+      }
+
       setState(() {
         _isRecording = true;
         _isRecordingLocked = false;
@@ -1896,6 +2015,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     if (!_isRecording) return;
 
     try {
+      final recordedDuration = _recordingDuration;
       final path = await _voiceRecorder.stopRecording();
       setState(() {
         _isRecording = false;
@@ -1903,8 +2023,28 @@ class _ChatroomPageState extends State<ChatroomPage> {
         _micDragOffset = 0.0;
         _micDragXOffset = 0.0;
         _cancelRecordingByGesture = false;
+        _recordingDuration = Duration.zero;
         _waveformData = [];
       });
+
+      if (recordedDuration < _minVoiceDuration) {
+        if (path != null && path.isNotEmpty) {
+          final file = File(path);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Voice message is too short'),
+              duration: Duration(seconds: 1),
+            ),
+          );
+        }
+        return;
+      }
 
       if (path != null && path.isNotEmpty) {
         await _sendVoiceMessage(path);
@@ -1957,10 +2097,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
   Future<void> _sendLockedVoiceMessage() async {
     if (!_isRecording && !_isRecordingLocked) return;
 
-    String? path;
-    if (_isRecording) {
-      path = await _voiceRecorder.stopRecording();
-    }
+    final recordedDuration = _recordingDuration;
+    final path = await _voiceRecorder.stopRecording();
 
     if (path == null || path.isEmpty) {
       await _voiceRecorder.cancelRecording();
@@ -1976,7 +2114,33 @@ class _ChatroomPageState extends State<ChatroomPage> {
       return;
     }
 
-    await _sendVoiceMessage(path);
+    if (recordedDuration < _minVoiceDuration) {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Voice message is too short'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+
+      setState(() {
+        _isRecording = false;
+        _isRecordingLocked = false;
+        _micDragOffset = 0.0;
+        _micDragXOffset = 0.0;
+        _cancelRecordingByGesture = false;
+        _recordingDuration = Duration.zero;
+        _waveformData = [];
+      });
+      return;
+    }
+
     setState(() {
       _isRecording = false;
       _isRecordingLocked = false;
@@ -1986,6 +2150,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
       _recordingDuration = Duration.zero;
       _waveformData = [];
     });
+
+    await _sendVoiceMessage(path);
   }
 
   // Animate waveform
@@ -2012,7 +2178,6 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
   Widget _buildWhatsAppInputArea() {
     final hasText = _messageController.text.trim().isNotEmpty;
-    final lockProgress = ((-_micDragOffset) / 80).clamp(0.0, 1.0).toDouble();
     final cancelProgress = ((-_micDragXOffset) / 120)
         .clamp(0.0, 1.0)
         .toDouble();
@@ -2078,6 +2243,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       color: Colors.white,
       child: Stack(
+        clipBehavior: Clip.none,
         children: [
           Row(
             children: [
@@ -2166,7 +2332,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                       )
                     : GestureDetector(
                         key: const ValueKey('mic'),
-                        onLongPressStart: (_) {
+                        onPanStart: (_) {
                           setState(() {
                             _micDragOffset = 0.0;
                             _micDragXOffset = 0.0;
@@ -2174,12 +2340,14 @@ class _ChatroomPageState extends State<ChatroomPage> {
                           });
                           _startVoiceRecording();
                         },
-                        onLongPressMoveUpdate: (details) {
+                        onPanUpdate: (details) {
+                          if (!_isRecording || _isRecordingLocked) return;
+
                           final wasLockArmed = _micDragOffset < -60;
                           final wasCancelArmed = _cancelRecordingByGesture;
 
-                          var nextY = details.offsetFromOrigin.dy;
-                          var nextX = details.offsetFromOrigin.dx;
+                          var nextY = _micDragOffset + details.delta.dy;
+                          var nextX = _micDragXOffset + details.delta.dx;
 
                           if (nextY < -80) nextY = -80;
                           if (nextY > 0) nextY = 0;
@@ -2202,7 +2370,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
                             _cancelRecordingByGesture = nextCancelArmed;
                           });
                         },
-                        onLongPressEnd: (_) {
+                        onPanEnd: (_) {
+                          if (!_isRecording) return;
+
                           if (_cancelRecordingByGesture) {
                             _cancelRecording();
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -2228,10 +2398,13 @@ class _ChatroomPageState extends State<ChatroomPage> {
                               : Offset.zero,
                           child: AnimatedScale(
                             duration: const Duration(milliseconds: 120),
-                            scale: _isRecording ? 1.08 : 1,
+                            scale: _isRecording ? 2.0 : 1,
+                            alignment: Alignment.bottomRight,
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 150),
-                              padding: const EdgeInsets.all(12),
+                              width: 46,
+                              height: 46,
+                              alignment: Alignment.center,
                               decoration: BoxDecoration(
                                 color: _isRecording
                                     ? Colors.red
@@ -2263,103 +2436,102 @@ class _ChatroomPageState extends State<ChatroomPage> {
           ),
           // Recording indicator overlay
           if (_isRecording && !_isRecordingLocked)
-            Positioned.fill(
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              right: 92,
               child: Container(
                 color: Colors.white,
                 child: Row(
                   children: [
-                    const SizedBox(width: 16),
-                    const Icon(Icons.mic, color: Colors.red, size: 20),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.mic, color: Colors.red, size: 20),
+                    ),
+                    const SizedBox(width: 8),
                     Text(
                       _formatDuration(_recordingDuration),
                       style: const TextStyle(
-                        fontSize: 16,
+                        fontSize: 14,
                         fontWeight: FontWeight.w500,
                         color: Colors.red,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(child: _buildWaveform(isLocked: false)),
-                    const SizedBox(width: 12),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.keyboard_arrow_up,
-                              color: _micDragOffset < -30
-                                  ? const Color(0xFF075E54)
-                                  : Colors.grey,
-                            ),
-                            const SizedBox(width: 4),
-                            AnimatedContainer(
-                              duration: const Duration(milliseconds: 120),
-                              height: 4,
-                              width: 56 * lockProgress,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF075E54),
-                                borderRadius: BorderRadius.circular(10),
+                    const SizedBox(width: 8),
+                    SizedBox(width: 44, child: _buildWaveform(isLocked: false)),
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.red.shade200),
+                      ),
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 24,
+                          minHeight: 24,
+                        ),
+                        icon: const Icon(
+                          Icons.close,
+                          color: Colors.red,
+                          size: 17,
+                        ),
+                        tooltip: 'Cancel recording',
+                        onPressed: _cancelRecording,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      width: 126,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Slide left to cancel',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: _cancelRecordingByGesture
+                                    ? Colors.red
+                                    : Colors.grey,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                          ],
-                        ),
-                        Text(
-                          _micDragOffset < -30
-                              ? 'Release to lock'
-                              : 'Slide up to lock',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: _micDragOffset < -30
-                                ? const Color(0xFF075E54)
-                                : Colors.grey,
                           ),
-                        ),
-                        Text(
-                          _cancelRecordingByGesture
-                              ? 'Release to cancel'
-                              : 'Slide left to cancel',
-                          style: TextStyle(
-                            fontSize: 11,
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.keyboard_arrow_left,
+                            size: 14,
                             color: _cancelRecordingByGesture
                                 ? Colors.red
                                 : Colors.grey,
                           ),
-                        ),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.keyboard_arrow_left,
-                              size: 16,
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 120),
+                            height: 4,
+                            width: 26 * cancelProgress,
+                            decoration: BoxDecoration(
                               color: _cancelRecordingByGesture
                                   ? Colors.red
                                   : Colors.grey,
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                            const SizedBox(width: 4),
-                            AnimatedContainer(
-                              duration: const Duration(milliseconds: 120),
-                              height: 4,
-                              width: 56 * cancelProgress,
-                              decoration: BoxDecoration(
-                                color: _cancelRecordingByGesture
-                                    ? Colors.red
-                                    : Colors.grey,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.red),
-                      tooltip: 'Cancel recording',
-                      onPressed: _cancelRecording,
-                    ),
+                    const SizedBox(width: 6),
                   ],
                 ),
               ),
@@ -2487,6 +2659,24 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 
   Widget _buildMessageContent(ChatMessage message) {
+    if (message.messageType == MessageType.text &&
+        (message.fileUrl != null || message.fileUrlThumb != null)) {
+      final inferredType = _resolveMessageType(
+        rawType: '',
+        fileUrl: message.fileUrl,
+        fileUrlThumb: message.fileUrlThumb,
+        value: message.value,
+      );
+
+      if (inferredType == MessageType.voice) {
+        return _buildVoiceMessageWidget(message);
+      }
+      if (inferredType == MessageType.image) {
+        return _buildImageMessageWidget(message);
+      }
+      return _buildFileMessageWidget(message);
+    }
+
     switch (message.messageType) {
       case MessageType.voice:
         return _buildVoiceMessageWidget(message);
@@ -2550,8 +2740,29 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 
   Widget _buildVoiceMessageWidget(ChatMessage message) {
-    final duration = message.duration ?? Duration.zero;
+    _ensureVoiceDurationLoaded(message);
+
+    final hasDuration =
+        message.duration != null && message.duration! > Duration.zero;
+    final durationLabel = hasDuration
+        ? _formatDuration(message.duration!)
+        : (_resolvingVoiceDurationIds.contains(message.id) ? '...' : '--:--');
     final isCurrentlyPlaying = message.isPlaying ?? false;
+    final totalDuration =
+        (message.duration != null && message.duration! > Duration.zero)
+        ? message.duration!
+        : _activeVoiceDuration;
+    final currentPosition = _activeVoiceMessageId == message.id
+        ? _activeVoicePosition
+        : Duration.zero;
+    final effectiveCurrent =
+        totalDuration > Duration.zero && currentPosition > totalDuration
+        ? totalDuration
+        : currentPosition;
+    final progress = totalDuration > Duration.zero
+        ? (effectiveCurrent.inMilliseconds / totalDuration.inMilliseconds)
+              .clamp(0.0, 1.0)
+        : 0.0;
     final attachmentKey = _attachmentKey(message);
     final isDownloading = _downloadingAttachmentKeys.contains(attachmentKey);
     final isDownloaded = _downloadedAttachmentPaths.containsKey(attachmentKey);
@@ -2583,43 +2794,20 @@ class _ChatroomPageState extends State<ChatroomPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Simplified waveform
-                Row(
-                  children: List.generate(15, (index) {
-                    final heights = [
-                      2.0,
-                      8.0,
-                      4.0,
-                      12.0,
-                      6.0,
-                      10.0,
-                      3.0,
-                      9.0,
-                      5.0,
-                      11.0,
-                      7.0,
-                      4.0,
-                      8.0,
-                      6.0,
-                      3.0,
-                    ];
-                    return Container(
-                      margin: const EdgeInsets.only(right: 2),
-                      width: 3,
-                      height: heights[index],
-                      decoration: BoxDecoration(
-                        color: isCurrentlyPlaying
-                            ? const Color(0xFF075E54)
-                            : Colors.grey[400],
-                        borderRadius: BorderRadius.circular(1),
-                      ),
-                    );
-                  }),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    minHeight: 6,
+                    value: progress,
+                    backgroundColor: Colors.grey[300],
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      const Color(0xFF075E54),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 4),
-                // Duration
                 Text(
-                  _formatDuration(duration),
+                  '${_formatDuration(effectiveCurrent)} / $durationLabel',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],
@@ -2655,6 +2843,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
     final attachmentKey = _attachmentKey(message);
     final isDownloading = _downloadingAttachmentKeys.contains(attachmentKey);
     final isDownloaded = _downloadedAttachmentPaths.containsKey(attachmentKey);
+    final imageSource = message.fileUrl ?? message.fileUrlThumb;
 
     return Container(
       constraints: const BoxConstraints(maxWidth: 250, maxHeight: 300),
@@ -2673,9 +2862,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
               borderRadius: BorderRadius.circular(8),
               child: Stack(
                 children: [
-                  message.fileUrl != null
+                  imageSource != null
                       ? FutureBuilder<File>(
-                          future: _getCachedImage(message.fileUrl!),
+                          future: _getCachedImage(imageSource),
                           builder: (context, snapshot) {
                             if (snapshot.connectionState ==
                                 ConnectionState.waiting) {
@@ -2754,7 +2943,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
                             color: Colors.grey[400],
                           ),
                         ),
-                  if (message.fileUrl != null)
+                  if (imageSource != null)
                     Positioned(
                       top: 8,
                       right: 8,
@@ -2812,7 +3001,10 @@ class _ChatroomPageState extends State<ChatroomPage> {
     final token = await ApiService.getAuthToken();
     final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
 
-    final filePath = await FileCacheService.getFile(imageUrl, headers: headers);
+    final filePath = await _resolveAttachmentSourcePath(
+      imageUrl,
+      headers: headers,
+    );
     if (filePath == null) {
       throw Exception('Failed to download image');
     }
@@ -2897,7 +3089,293 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 
   String _attachmentKey(ChatMessage message) {
-    return '${message.id}_${message.fileUrl ?? ''}_${message.messageType.name}';
+    final attachmentRef = message.fileUrl ?? message.fileUrlThumb ?? '';
+    return '${message.id}_${attachmentRef}_${message.messageType.name}';
+  }
+
+  MessageType _resolveMessageType({
+    required String rawType,
+    String? fileUrl,
+    String? fileUrlThumb,
+    required String value,
+  }) {
+    final normalizedType = rawType.trim().toLowerCase();
+    final probe =
+        '$normalizedType ${fileUrl ?? ''} ${fileUrlThumb ?? ''} ${value.toLowerCase()}';
+
+    if (normalizedType == '2') {
+      return MessageType.image;
+    }
+    if (normalizedType == '3') {
+      return MessageType.voice;
+    }
+    if (normalizedType == '4') {
+      return MessageType.file;
+    }
+
+    if (probe.contains('voice') ||
+        probe.contains('audio') ||
+        probe.contains('.mp3') ||
+        probe.contains('.wav') ||
+        probe.contains('.m4a') ||
+        probe.contains('.aac') ||
+        probe.contains('.ogg') ||
+        probe.contains('.opus')) {
+      return MessageType.voice;
+    }
+
+    if (probe.contains('image') ||
+        probe.contains('photo') ||
+        probe.contains('picture') ||
+        probe.contains('.jpg') ||
+        probe.contains('.jpeg') ||
+        probe.contains('.png') ||
+        probe.contains('.gif') ||
+        probe.contains('.webp') ||
+        probe.contains('.bmp') ||
+        probe.contains('.heic')) {
+      return MessageType.image;
+    }
+
+    if ((fileUrl != null && fileUrl.trim().isNotEmpty) ||
+        (fileUrlThumb != null && fileUrlThumb.trim().isNotEmpty)) {
+      return MessageType.file;
+    }
+
+    return MessageType.text;
+  }
+
+  Duration? _extractVoiceDuration(Map<String, dynamic> msg) {
+    final raw = _readStringFromKeys(msg, const [
+      'Duration',
+      'duration',
+      'VoiceDuration',
+      'voiceDuration',
+      'DurationSeconds',
+      'durationSeconds',
+      'DurationSecond',
+      'durationSecond',
+      'VoiceTime',
+      'voiceTime',
+      'Seconds',
+      'seconds',
+      'Length',
+      'length',
+      'Time',
+      'time',
+    ]);
+
+    if (raw == null || raw.isEmpty) return null;
+
+    final numeric = double.tryParse(raw);
+    if (numeric != null) {
+      if (numeric > 1000) {
+        return Duration(milliseconds: numeric.round());
+      }
+      return Duration(seconds: numeric.round());
+    }
+
+    final parts = raw.split(':');
+    if (parts.length == 2 || parts.length == 3) {
+      final values = parts.map((p) => int.tryParse(p.trim()) ?? 0).toList();
+      if (parts.length == 2) {
+        return Duration(minutes: values[0], seconds: values[1]);
+      }
+      return Duration(hours: values[0], minutes: values[1], seconds: values[2]);
+    }
+
+    return null;
+  }
+
+  void _ensureVoiceDurationLoaded(ChatMessage message) {
+    if (message.messageType != MessageType.voice) return;
+    if (message.duration != null && message.duration! > Duration.zero) return;
+    if (_activeVoiceMessageId != null) return;
+    if (_resolvingVoiceDurationIds.contains(message.id)) return;
+
+    final durationKey = _attachmentKey(message);
+    if (_failedVoiceDurationKeys.contains(durationKey)) return;
+
+    _resolvingVoiceDurationIds.add(message.id);
+
+    Future(() async {
+      final token = await ApiService.getAuthToken();
+      final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
+
+      final sourcePath = await _prepareVoicePlaybackPath(
+        message,
+        headers: headers,
+      );
+      if (sourcePath == null) {
+        _failedVoiceDurationKeys.add(durationKey);
+        return;
+      }
+
+      final resolved = await _voiceRecorder.getAudioDuration(sourcePath);
+      if (resolved == null || resolved <= Duration.zero) {
+        _failedVoiceDurationKeys.add(durationKey);
+        return;
+      }
+
+      _failedVoiceDurationKeys.remove(durationKey);
+      if (!mounted) return;
+
+      setState(() {
+        final index = _messages.indexWhere((m) => m.id == message.id);
+        if (index != -1) {
+          _messages[index] = ChatMessage(
+            id: _messages[index].id,
+            value: _messages[index].value,
+            fileUrl: _messages[index].fileUrl,
+            fileUrlThumb: _messages[index].fileUrlThumb,
+            date: _messages[index].date,
+            userId: _messages[index].userId,
+            isSent: _messages[index].isSent,
+            status: _messages[index].status,
+            isMine: _messages[index].isMine,
+            sender: _messages[index].sender,
+            messageType: _messages[index].messageType,
+            duration: resolved,
+            isPlaying: _messages[index].isPlaying,
+          );
+        }
+      });
+    }).whenComplete(() {
+      _resolvingVoiceDurationIds.remove(message.id);
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  bool _hasKnownAudioExtension(String path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.mp3') ||
+        lower.endsWith('.wav') ||
+        lower.endsWith('.m4a') ||
+        lower.endsWith('.aac') ||
+        lower.endsWith('.ogg') ||
+        lower.endsWith('.opus');
+  }
+
+  bool _looksLikeAudioReference(String? value) {
+    if (value == null || value.trim().isEmpty) return false;
+    final lower = value.toLowerCase();
+    return lower.contains('.mp3') ||
+        lower.contains('.wav') ||
+        lower.contains('.m4a') ||
+        lower.contains('.aac') ||
+        lower.contains('.ogg') ||
+        lower.contains('.opus') ||
+        lower.contains('/voice') ||
+        lower.contains('voice_') ||
+        lower.contains('audio');
+  }
+
+  String? _pickVoiceAttachmentUrl(ChatMessage message) {
+    final fileUrl = message.fileUrl;
+    final thumbUrl = message.fileUrlThumb;
+
+    if (_looksLikeAudioReference(fileUrl)) return fileUrl;
+    if (_looksLikeAudioReference(thumbUrl)) return thumbUrl;
+
+    return fileUrl ?? thumbUrl;
+  }
+
+  Future<String?> _prepareVoicePlaybackPath(
+    ChatMessage message, {
+    Map<String, String>? headers,
+    bool forceRefresh = false,
+  }) async {
+    final attachmentUrl = _pickVoiceAttachmentUrl(message);
+    if (attachmentUrl == null || attachmentUrl.isEmpty) return null;
+
+    final sourcePath = await _resolveAttachmentSourcePath(
+      attachmentUrl,
+      headers: headers,
+      forceRefresh: forceRefresh,
+    );
+    if (sourcePath == null) return null;
+
+    if (_hasKnownAudioExtension(sourcePath)) {
+      return sourcePath;
+    }
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final convertedPath =
+          '${tempDir.path}/voice_${message.id}_${DateTime.now().millisecondsSinceEpoch}.aac';
+      await File(sourcePath).copy(convertedPath);
+      return convertedPath;
+    } catch (_) {
+      return sourcePath;
+    }
+  }
+
+  String? _readStringFromKeys(Map<String, dynamic> source, List<String> keys) {
+    for (final key in keys) {
+      final value = source[key];
+      if (value == null) continue;
+      final normalized = value.toString().trim();
+      if (normalized.isEmpty) continue;
+      if (normalized.toLowerCase() == 'null' ||
+          normalized.toLowerCase() == 'undefined') {
+        continue;
+      }
+      return normalized;
+    }
+    return null;
+  }
+
+  bool _isLikelyLocalPath(String value) {
+    return value.startsWith('/') || RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(value);
+  }
+
+  String _buildRemoteFileUrl(String fileUrl) {
+    final raw = fileUrl.trim();
+    if (raw.isEmpty) return raw;
+
+    final cleaned = raw.replaceAll('\\', '/');
+    final hasHttpScheme =
+        cleaned.startsWith('http://') || cleaned.startsWith('https://');
+
+    if (hasHttpScheme) {
+      return Uri.encodeFull(cleaned);
+    }
+
+    final normalizedPath = cleaned.startsWith('/') ? cleaned : '/$cleaned';
+    return Uri.encodeFull('${ApiService.baseImageUrl}$normalizedPath');
+  }
+
+  Future<String?> _resolveAttachmentSourcePath(
+    String fileUrl, {
+    Map<String, String>? headers,
+    bool forceRefresh = false,
+  }) async {
+    final raw = fileUrl.trim();
+    if (raw.isEmpty) return null;
+
+    final fileUri = Uri.tryParse(raw);
+    if (fileUri != null && fileUri.scheme == 'file') {
+      final localPath = fileUri.toFilePath();
+      if (await File(localPath).exists()) {
+        return localPath;
+      }
+    }
+
+    if (_isLikelyLocalPath(raw)) {
+      final localFile = File(raw);
+      if (await localFile.exists()) {
+        return localFile.path;
+      }
+    }
+
+    final remoteUrl = _buildRemoteFileUrl(raw);
+    return FileCacheService.getFile(
+      remoteUrl,
+      headers: headers,
+      forceRefresh: forceRefresh,
+    );
   }
 
   Future<Directory> _resolveDownloadDirectory() async {
@@ -2937,7 +3415,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
   }
 
   Future<void> _downloadMessageAttachment(ChatMessage message) async {
-    if (message.fileUrl == null || message.fileUrl!.isEmpty) {
+    final attachmentUrl = message.fileUrl ?? message.fileUrlThumb;
+    if (attachmentUrl == null || attachmentUrl.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No file available for download')),
@@ -2967,8 +3446,8 @@ class _ChatroomPageState extends State<ChatroomPage> {
     try {
       final token = await ApiService.getAuthToken();
       final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
-      final sourcePath = await FileCacheService.getFile(
-        message.fileUrl!,
+      final sourcePath = await _resolveAttachmentSourcePath(
+        attachmentUrl,
         headers: headers,
       );
 
@@ -2978,10 +3457,7 @@ class _ChatroomPageState extends State<ChatroomPage> {
 
       final downloadsDir = await _resolveDownloadDirectory();
       final sourceFile = File(sourcePath);
-      final originalName = _extractFileName(
-        message.fileUrl!,
-        message.messageType,
-      );
+      final originalName = _extractFileName(attachmentUrl, message.messageType);
       var targetPath = '${downloadsDir.path}/$originalName';
       var counter = 1;
 
@@ -3020,50 +3496,161 @@ class _ChatroomPageState extends State<ChatroomPage> {
   void _toggleVoicePlayback(ChatMessage message) async {
     print('🎵 _toggleVoicePlayback called: fileUrl=${message.fileUrl}');
 
-    if (message.fileUrl == null) return;
+    if ((message.fileUrl ?? '').isEmpty &&
+        (message.fileUrlThumb ?? '').isEmpty) {
+      return;
+    }
 
     final isCurrentlyPlaying = message.isPlaying ?? false;
 
     if (isCurrentlyPlaying) {
       await _voiceRecorder.pauseVoiceMessage();
+      if (!mounted) return;
+      setState(() {
+        if (_activeVoiceMessageId == message.id) {
+          _activeVoiceMessageId = null;
+        }
+        final messageIndex = _messages.indexOf(message);
+        if (messageIndex != -1) {
+          _messages[messageIndex] = ChatMessage(
+            id: message.id,
+            value: message.value,
+            fileUrl: message.fileUrl,
+            fileUrlThumb: message.fileUrlThumb,
+            date: message.date,
+            userId: message.userId,
+            isSent: message.isSent,
+            status: message.status,
+            isMine: message.isMine,
+            sender: message.sender,
+            messageType: message.messageType,
+            duration: message.duration,
+            isPlaying: false,
+          );
+        }
+      });
+      return;
     } else {
       // Get authentication token for API downloads
       final token = await ApiService.getAuthToken();
       final headers = token != null ? {'Authorization': 'Bearer $token'} : null;
 
-      // Play voice message from URL (will be cached automatically)
-      await _voiceRecorder.playVoiceMessageFromUrl(
-        message.fileUrl!,
+      final sourcePath = await _prepareVoicePlaybackPath(
+        message,
         headers: headers,
       );
+      if (sourcePath == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Unable to load voice file')),
+          );
+        }
+        return;
+      }
+      final didPlay = await _voiceRecorder.playVoiceMessage(sourcePath);
+      if (!didPlay) {
+        final refreshedSourcePath = await _prepareVoicePlaybackPath(
+          message,
+          headers: headers,
+          forceRefresh: true,
+        );
+
+        if (refreshedSourcePath != null) {
+          final retryDidPlay = await _voiceRecorder.playVoiceMessage(
+            refreshedSourcePath,
+          );
+
+          if (retryDidPlay) {
+            if (!mounted) return;
+            setState(() {
+              _activeVoiceMessageId = message.id;
+              _activeVoicePosition = Duration.zero;
+              _activeVoiceDuration = message.duration ?? Duration.zero;
+
+              _messages = _messages
+                  .map(
+                    (m) => ChatMessage(
+                      id: m.id,
+                      value: m.value,
+                      fileUrl: m.fileUrl,
+                      fileUrlThumb: m.fileUrlThumb,
+                      date: m.date,
+                      userId: m.userId,
+                      isSent: m.isSent,
+                      status: m.status,
+                      isMine: m.isMine,
+                      sender: m.sender,
+                      messageType: m.messageType,
+                      duration: m.duration,
+                      isPlaying: m.id == message.id,
+                    ),
+                  )
+                  .toList();
+            });
+            return;
+          }
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Unable to play voice file')),
+          );
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _activeVoiceMessageId = message.id;
+          _activeVoicePosition = Duration.zero;
+          _activeVoiceDuration = message.duration ?? Duration.zero;
+
+          _messages = _messages
+              .map(
+                (m) => ChatMessage(
+                  id: m.id,
+                  value: m.value,
+                  fileUrl: m.fileUrl,
+                  fileUrlThumb: m.fileUrlThumb,
+                  date: m.date,
+                  userId: m.userId,
+                  isSent: m.isSent,
+                  status: m.status,
+                  isMine: m.isMine,
+                  sender: m.sender,
+                  messageType: m.messageType,
+                  duration: m.duration,
+                  isPlaying: m.id == message.id,
+                ),
+              )
+              .toList();
+
+          final messageIndex = _messages.indexOf(message);
+          if (messageIndex != -1) {
+            _messages[messageIndex] = ChatMessage(
+              id: message.id,
+              value: message.value,
+              fileUrl: message.fileUrl,
+              fileUrlThumb: message.fileUrlThumb,
+              date: message.date,
+              userId: message.userId,
+              isSent: message.isSent,
+              status: message.status,
+              isMine: message.isMine,
+              sender: message.sender,
+              messageType: message.messageType,
+              duration: message.duration,
+              isPlaying: true,
+            );
+          }
+        });
+      }
 
       // Mark voice message as listened when played (only if it's not from current user)
       if (!message.isMe && message.messageId != null) {
         await _markVoiceAsListened(message.messageId!);
       }
     }
-
-    // Update the message playing state
-    setState(() {
-      final messageIndex = _messages.indexOf(message);
-      if (messageIndex != -1) {
-        _messages[messageIndex] = ChatMessage(
-          id: message.id,
-          value: message.value,
-          fileUrl: message.fileUrl,
-          fileUrlThumb: message.fileUrlThumb,
-          date: message.date,
-          userId: message.userId,
-          isSent: message.isSent,
-          status: message.status,
-          isMine: message.isMine,
-          sender: message.sender,
-          messageType: message.messageType,
-          duration: message.duration,
-          isPlaying: !isCurrentlyPlaying,
-        );
-      }
-    });
   }
 
   Widget _buildDateHeader(DateTime date) {
@@ -3134,6 +3721,9 @@ class _ChatroomPageState extends State<ChatroomPage> {
   @override
   @override
   void dispose() {
+    ChatSyncService.stop();
+    _voicePositionSubscription?.cancel();
+    _voiceStateSubscription?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     _voiceRecorder.dispose();
