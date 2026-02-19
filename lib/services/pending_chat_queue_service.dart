@@ -8,6 +8,11 @@ import 'api_service.dart';
 class PendingChatQueueService {
   static const String _prefsKey = 'pending_chat_queue_v1';
 
+  static Future<void> clearQueue() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefsKey);
+  }
+
   static Future<List<Map<String, dynamic>>> _readQueue() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_prefsKey);

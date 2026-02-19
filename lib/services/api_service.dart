@@ -161,6 +161,31 @@ class ApiService {
     return token != null && token.isNotEmpty && userData != null;
   }
 
+  static Future<bool> isLoggedInPreferOnline() async {
+    final token = await getAuthToken();
+    if (token == null || token.isEmpty) return false;
+
+    try {
+      final userInfo = await getUserInfo().timeout(const Duration(seconds: 8));
+      if (userInfo != null) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('user_data', json.encode(userInfo));
+        return true;
+      }
+
+      final shouldRedirect = await shouldRedirectToLogin();
+      if (shouldRedirect) return false;
+    } on TimeoutException {
+      // Fall back to local state when network is slow/unavailable.
+    } on SocketException {
+      // Fall back to local state when offline.
+    } catch (_) {
+      // Unknown failures fall back to local state.
+    }
+
+    return await isLoggedIn();
+  }
+
   // Helper method to get full avatar URL
   static String? getFullAvatarUrl(String? picUrlAvatar) {
     if (picUrlAvatar == null ||

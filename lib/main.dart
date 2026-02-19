@@ -55,8 +55,10 @@ class _MyAppState extends State<MyApp> {
   Future<Map<String, dynamic>> _checkAuthStatus() async {
     try {
       await ApiService.validateRefreshTokenOnStartup();
-      final isLoggedIn = await ApiService.isLoggedIn();
       final shouldRedirect = await ApiService.shouldRedirectToLogin();
+      final isLoggedIn = shouldRedirect
+          ? false
+          : await ApiService.isLoggedInPreferOnline();
 
       if (isLoggedIn && !shouldRedirect) {
         try {

@@ -11,6 +11,7 @@ import 'settings_page.dart';
 import 'add_transfer_page.dart';
 import 'services/api_service.dart';
 import 'services/avatar_cache_service.dart';
+import 'services/user_session_cache_service.dart';
 import 'flutter_login_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -130,7 +131,7 @@ class _HomePageState extends State<HomePage> {
           ),
           ElevatedButton(
             onPressed: () async {
-              await ApiService.removeAuthToken();
+              await UserSessionCacheService.clearAllUserCache();
               if (context.mounted) {
                 Navigator.pushAndRemoveUntil(
                   context,

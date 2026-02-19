@@ -1,4 +1,4 @@
-package com.example.exchange_mobile
+package com.webflow.exchange_almas
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.exchange_mobile"
+    namespace = "com.webflow.exchange_almas"
     compileSdk =36 // flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,7 +20,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.exchange_mobile"
+        applicationId = "com.webflow.exchange_almas"
     // You can update the following values to match your application needs.
     // For more information, see: https://flutter.dev/to/review-gradle-config.
     // Set minSdk to 23 so devices running Android 6 (API 23) are supported.

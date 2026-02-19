@@ -10,6 +10,20 @@ class LocalUsersDbService {
   static Database? _database;
   static const int _maxServerMessageId = 2147483647;
 
+  static Future<void> clearAllCachedData() async {
+    try {
+      if (_database != null) {
+        await _database!.close();
+        _database = null;
+      }
+
+      final dbPath = await getDatabasesPath();
+      await deleteDatabase('$dbPath/$_databaseName');
+    } catch (e) {
+      print('LocalUsersDbService clear cache error: $e');
+    }
+  }
+
   static Future<Database> get _db async {
     if (_database != null) return _database!;
 
