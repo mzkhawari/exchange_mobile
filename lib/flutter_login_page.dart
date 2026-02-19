@@ -21,6 +21,34 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   String? _errorMessage;
 
+  String _resolveWelcomeName(Map<String, dynamic>? user) {
+    if (user == null) return 'User';
+
+    final firstName = user['firstName']?.toString().trim();
+    final lastName = user['lastName']?.toString().trim();
+    final fullName = [
+      if (firstName != null && firstName.isNotEmpty) firstName,
+      if (lastName != null && lastName.isNotEmpty) lastName,
+    ].join(' ');
+
+    if (fullName.isNotEmpty) return fullName;
+
+    final fallbacks = [
+      user['displayName'],
+      user['name'],
+      user['userName'],
+      user['username'],
+      user['email'],
+    ];
+
+    for (final value in fallbacks) {
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+    }
+
+    return 'User';
+  }
+
   Future<void> _login() async {
     setState(() {
       _isLoading = true;
@@ -80,18 +108,43 @@ class _LoginPageState extends State<LoginPage> {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('login_response', jsonEncode(data));
 
-          // Try to get user info using the token
-          final userInfo = await ApiService.getUserInfo();
+          // Prefer currentUser from login response; fallback to getUserInfo.
+          Map<String, dynamic>? loginUser;
+          if (data['currentUser'] is Map) {
+            loginUser = Map<String, dynamic>.from(data['currentUser']);
+          }
 
-          String welcomeName = 'User';
-          if (userInfo != null) {
-            // Save complete user data if API call succeeds
-            await prefs.setString('user_data', jsonEncode(userInfo));
-            welcomeName = userInfo['firstName'] ?? 'User';
-          } else if (data['currentUser'] != null) {
-            // Use user data from login response if getUserInfo fails
-            await prefs.setString('user_data', jsonEncode(data['currentUser']));
-            welcomeName = data['currentUser']['firstName'] ?? 'User';
+          final userInfo = await ApiService.getUserInfo();
+          Map<String, dynamic>? chosenUser = loginUser;
+          if (chosenUser == null && userInfo != null) {
+            chosenUser = Map<String, dynamic>.from(userInfo);
+          }
+
+          // Diagnostic: if two sources disagree, it is likely an API-side issue.
+          if (loginUser != null && userInfo != null) {
+            final loginUserName = (loginUser['userName'] ?? loginUser['username'])
+                ?.toString()
+                .trim()
+                .toLowerCase();
+            final infoUserName = (userInfo['userName'] ?? userInfo['username'])
+                ?.toString()
+                .trim()
+                .toLowerCase();
+
+            if (loginUserName != null &&
+                infoUserName != null &&
+                loginUserName.isNotEmpty &&
+                infoUserName.isNotEmpty &&
+                loginUserName != infoUserName) {
+              debugPrint(
+                'User mismatch after login: login response userName=$loginUserName, getUserInfo userName=$infoUserName',
+              );
+            }
+          }
+
+          final welcomeName = _resolveWelcomeName(chosenUser);
+          if (chosenUser != null) {
+            await prefs.setString('user_data', jsonEncode(chosenUser));
           }
 
           try {

@@ -49,7 +49,13 @@ class _HomePageState extends State<HomePage> {
 
       setState(() {
         _branchTitle = userData['branchTitle'] ?? 'Katawaz Exchange';
-        _userName = userData['firstName'] ?? '';
+        _userName =
+            userData['firstName']?.toString() ??
+            userData['displayName']?.toString() ??
+            userData['name']?.toString() ??
+            userData['userName']?.toString() ??
+            userData['username']?.toString() ??
+            '';
         _avatarUrl = ApiService.getFullAvatarUrl(rawAvatarPath?.toString());
       });
 
